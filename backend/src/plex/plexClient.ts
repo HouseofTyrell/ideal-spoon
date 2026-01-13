@@ -22,7 +22,7 @@ export interface PlexSearchResult {
 }
 
 export interface PlexClientConfig {
-  baseUrl: string;
+  url: string;  // Plex server URL
   token: string;
   timeout?: number;
 }
@@ -36,7 +36,7 @@ export class PlexClient {
   private timeout: number;
 
   constructor(config: PlexClientConfig) {
-    this.baseUrl = config.baseUrl.replace(/\/$/, '');
+    this.baseUrl = config.url.replace(/\/$/, '');
     this.token = config.token;
     this.timeout = config.timeout || 30000;
   }

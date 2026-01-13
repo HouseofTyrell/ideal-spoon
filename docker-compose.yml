@@ -14,7 +14,10 @@ services:
       - CORS_ORIGIN=http://localhost:5173
       - JOBS_PATH=/app/jobs
       - FONTS_PATH=/app/fonts
-      - KOMETA_IMAGE=python:3.11-slim
+      # Kometa-based renderer image (built from ./renderer)
+      - KOMETA_RENDERER_IMAGE=kometa-preview-renderer:latest
+      # Pinned Kometa version for deterministic rendering
+      - KOMETA_IMAGE_TAG=${KOMETA_IMAGE_TAG:-v2.0.2}
       # Optional: Mount user assets
       # - USER_ASSETS_PATH=/user_assets
       # Optional: Mount user Kometa config for Original Posters
@@ -27,7 +30,26 @@ services:
       # - /path/to/your/assets:/user_assets:ro
       # Optional: Uncomment and modify for your Kometa config directory
       # - /path/to/your/kometa/config:/user_config:ro
+    depends_on:
+      - kometa-renderer-build
     restart: unless-stopped
+    networks:
+      - kometa-preview
+
+  # Kometa-based renderer service
+  # This service builds the renderer image but doesn't run as a long-lived service.
+  # The backend spawns renderer containers on-demand for each preview job.
+  kometa-renderer-build:
+    build:
+      context: ./renderer
+      dockerfile: Dockerfile
+      args:
+        - KOMETA_IMAGE_TAG=${KOMETA_IMAGE_TAG:-v2.0.2}
+    image: kometa-preview-renderer:latest
+    # This service only builds the image, it doesn't stay running
+    command: ["echo", "Renderer image built successfully"]
+    profiles:
+      - build
     networks:
       - kometa-preview
 

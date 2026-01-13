@@ -15,7 +15,7 @@ export interface RunnerConfig {
 export interface RunnerJob {
   jobId: string;
   configYaml: string;
-  rendererScript: string;
+  rendererScript: string;  // Kept for interface compatibility, but not used with Kometa renderer
 }
 
 export type RunnerEventType = 'log' | 'progress' | 'error' | 'complete';
@@ -29,6 +29,10 @@ export interface RunnerEvent {
 
 /**
  * Docker runner for Kometa overlay rendering
+ *
+ * Uses the Kometa-based renderer image (kometa-preview-renderer) which
+ * applies overlays using Kometa's actual rendering pipeline for
+ * pixel-identical output.
  */
 export class KometaRunner extends EventEmitter {
   private docker: Docker;
@@ -50,16 +54,19 @@ export class KometaRunner extends EventEmitter {
   }
 
   /**
-   * Run the overlay renderer for a job
+   * Run the Kometa-based overlay renderer for a job
+   *
+   * The renderer uses Kometa's internal overlay modules to apply
+   * overlays to local images without connecting to Plex.
    */
   async run(job: RunnerJob): Promise<{ exitCode: number; logs: string }> {
-    const { jobId, rendererScript } = job;
+    const { jobId } = job;
     const jobPath = path.join(this.config.jobsBasePath, jobId);
 
     this.emitEvent(jobId, {
       type: 'log',
       timestamp: new Date(),
-      message: `Starting render job: ${jobId}`,
+      message: `Starting Kometa-based render job: ${jobId}`,
     });
 
     try {
@@ -72,15 +79,10 @@ export class KometaRunner extends EventEmitter {
       await ensureDir(logsDir);
       await ensureDir(outputDir);
 
-      // Write the renderer script
-      const scriptPath = path.join(configDir, 'renderer.py');
-      await writeText(scriptPath, rendererScript);
-      await fs.chmod(scriptPath, 0o755);
-
       this.emitEvent(jobId, {
         type: 'log',
         timestamp: new Date(),
-        message: 'Renderer script written',
+        message: 'Using Kometa-based renderer for pixel-identical overlays',
       });
 
       // Build volume mounts
@@ -98,23 +100,25 @@ export class KometaRunner extends EventEmitter {
       this.emitEvent(jobId, {
         type: 'progress',
         timestamp: new Date(),
-        message: 'Creating container...',
+        message: 'Creating Kometa renderer container...',
         data: { progress: 10 },
       });
 
-      // Create container
+      // Create container using Kometa-based renderer
+      // The entrypoint in the renderer image is already set to run the preview script
       const container = await this.docker.createContainer({
         Image: this.config.kometaImage,
-        Cmd: ['python3', '/jobs/config/renderer.py'],
+        Cmd: ['--job', '/jobs'],  // Arguments passed to preview_entrypoint.py
         HostConfig: {
           Binds: binds,
           AutoRemove: false,
-          NetworkMode: 'none', // No network access for safety
+          NetworkMode: 'none', // No network access for safety - preview is fully offline
         },
         Env: [
           'PYTHONUNBUFFERED=1',
+          'KOMETA_DOCKER=True',  // Signal we're running in Docker context
         ],
-        WorkingDir: '/jobs',
+        WorkingDir: '/',
         Tty: false,
         AttachStdout: true,
         AttachStderr: true,
