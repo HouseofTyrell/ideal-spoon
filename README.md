@@ -5,7 +5,7 @@ A local-only web application for previewing Kometa overlays exactly as Kometa wo
 ## Features
 
 - **Pixel-identical preview**: Uses Kometa's actual overlay rendering code for pixel-perfect results
-- **Safe by design**: Preview mode cannot accidentally modify Plex metadata - operates fully offline
+- **Safe by design**: Preview mode cannot modify Plex metadata — all writes blocked by proxy (read-only network access)
 - **Multiple artwork sources**: Supports asset directories, Original Posters backups, and Plex current artwork
 - **Real-time logs**: Live streaming of render progress via Server-Sent Events
 - **Before/After comparison**: Toggle between original and overlayed images
@@ -100,6 +100,7 @@ For Windows users, we provide convenient scripts that automate the entire setup 
 | `scripts\stop.bat` | Stop all containers |
 | `scripts\logs.bat` | View live container logs (Ctrl+C to exit) |
 | `scripts\reset.bat` | Full reset: remove volumes, rebuild without cache |
+| `scripts\smoke-test.ps1` | Verify a preview job completed successfully |
 
 **PowerShell alternative:**
 ```powershell
@@ -208,7 +209,7 @@ The log panel shows real-time progress and any warnings.
 │  │  - Loads base images from /jobs/input                 │   │
 │  │  - Applies overlays using Kometa's PIL/Pillow code    │   │
 │  │  - Saves pixel-identical results to /jobs/output      │   │
-│  │  - Network isolated (no Plex writes possible)         │   │
+│  │  - Read-only Plex access (writes blocked by proxy)    │   │
 │  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -311,6 +312,29 @@ Before running a preview, verify:
 - [ ] Docker is running and accessible
 - [ ] Fonts are present in the `fonts/` directory
 
+## Smoke Test
+
+After running a preview job, you can verify success with the included smoke test scripts:
+
+**Linux/macOS:**
+```bash
+./scripts/smoke-test.sh              # Test most recent job
+./scripts/smoke-test.sh <job-id>     # Test specific job
+```
+
+**Windows (PowerShell):**
+```powershell
+.\scripts\smoke-test.ps1             # Test most recent job
+.\scripts\smoke-test.ps1 <job-id>    # Test specific job
+```
+
+The smoke test verifies:
+1. `summary.json` exists with expected structure
+2. Kometa exited with code 0
+3. Write blocking was active (captured uploads > 0)
+4. Output images were generated (5 `*_after.*` files)
+5. No missing targets
+
 ## Troubleshooting
 
 ### "Plex connection failed"
@@ -345,8 +369,11 @@ sudo usermod -aG docker $USER
 ## Security Notes
 
 - **Local-only**: The backend binds to `127.0.0.1` by default
-- **No Plex writes**: Preview mode only reads from Plex, never writes
-- **Network isolation**: Renderer containers run with `NetworkMode: 'none'` - no network access possible
+- **No Plex writes**: All write requests (PUT/POST/PATCH/DELETE) are blocked at the HTTP proxy layer
+- **Proxy-based safety**: Renderer containers connect to Plex via a local write-blocking proxy that:
+  - Forwards GET/HEAD requests to real Plex (reads allowed)
+  - Blocks and captures PUT/POST uploads (writes blocked, images saved locally)
+  - Blocks PATCH/DELETE requests (returns fake 200 OK)
 - **Token redaction**: Plex tokens are never logged or exposed to the frontend
 - **Path traversal protection**: Image serving validates paths to prevent directory traversal
 - **Read-only mounts**: User assets and fonts are mounted read-only into containers
