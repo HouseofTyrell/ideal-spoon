@@ -4,11 +4,12 @@ A local-only web application for previewing Kometa overlays exactly as Kometa wo
 
 ## Features
 
-- **Pixel-identical preview**: Uses the same rendering pipeline as Kometa
-- **Safe by design**: Preview mode cannot accidentally modify Plex metadata
+- **Pixel-identical preview**: Uses Kometa's actual overlay rendering code for pixel-perfect results
+- **Safe by design**: Preview mode cannot accidentally modify Plex metadata - operates fully offline
 - **Multiple artwork sources**: Supports asset directories, Original Posters backups, and Plex current artwork
 - **Real-time logs**: Live streaming of render progress via Server-Sent Events
 - **Before/After comparison**: Toggle between original and overlayed images
+- **Deterministic rendering**: Pinned Kometa Docker image version ensures consistent results
 
 ## Preview Targets (v0)
 
@@ -60,14 +61,20 @@ The current version previews 5 static items:
      - /path/to/your/kometa/config:/user_config:ro
    ```
 
-4. **Start the application**
+4. **Build and start the application**
    ```bash
+   # Build the Kometa-based renderer image first
+   docker-compose build
+
+   # Start the services
    docker-compose up -d
    ```
 
 5. **Access the UI**
    - Frontend: http://localhost:5173
    - Backend API: http://localhost:3001
+
+> **Note**: The first build will pull the Kometa base image which may take a few minutes depending on your connection speed.
 
 ### Option 2: Local Development
 
@@ -158,15 +165,29 @@ The log panel shows real-time progress and any warnings.
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                   Renderer Container (Docker)                │
+│              Kometa Renderer Container (Docker)              │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │  Python + Pillow                                      │   │
+│  │  Based on kometateam/kometa (pinned version)          │   │
+│  │  - Uses Kometa's actual overlay rendering modules     │   │
 │  │  - Loads base images from /jobs/input                 │   │
-│  │  - Applies overlay compositions                       │   │
-│  │  - Saves results to /jobs/output                      │   │
+│  │  - Applies overlays using Kometa's PIL/Pillow code    │   │
+│  │  - Saves pixel-identical results to /jobs/output      │   │
+│  │  - Network isolated (no Plex writes possible)         │   │
 │  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### Why Kometa Container?
+
+The preview renderer is based on the official Kometa Docker image (`kometateam/kometa`) for several important reasons:
+
+1. **Pixel-identical rendering**: By using Kometa's actual overlay code, the preview output matches exactly what Kometa would produce when running against your real library.
+
+2. **Deterministic results**: The Kometa image version is pinned (default: `v2.0.2`) to ensure consistent rendering across different environments and over time.
+
+3. **Same fonts and styling**: Kometa's bundled fonts and styling calculations are used, eliminating subtle differences that could occur with a reimplementation.
+
+4. **Future compatibility**: As Kometa's overlay system evolves, updates to the pinned version will automatically incorporate improvements.
 
 ## API Endpoints
 
@@ -191,9 +212,10 @@ The log panel shows real-time progress and any warnings.
 | `PORT` | `3001` | Backend port |
 | `HOST` | `127.0.0.1` | Backend host |
 | `CORS_ORIGIN` | `http://localhost:5173` | Allowed CORS origin |
-| `JOBS_PATH` | `../jobs` | Jobs directory |
-| `FONTS_PATH` | `../fonts` | Fonts directory |
-| `KOMETA_IMAGE` | `python:3.11-slim` | Docker image for renderer |
+| `JOBS_PATH` | `./jobs` | Jobs directory |
+| `FONTS_PATH` | `./fonts` | Fonts directory |
+| `KOMETA_IMAGE_TAG` | `v2.0.2` | Pinned Kometa Docker image tag |
+| `KOMETA_RENDERER_IMAGE` | `kometa-preview-renderer:latest` | Built renderer image name |
 | `USER_ASSETS_PATH` | - | User asset directory mount |
 | `USER_KOMETA_CONFIG_PATH` | - | User Kometa config mount |
 
@@ -250,8 +272,10 @@ sudo usermod -aG docker $USER
 
 - **Local-only**: The backend binds to `127.0.0.1` by default
 - **No Plex writes**: Preview mode only reads from Plex, never writes
+- **Network isolation**: Renderer containers run with `NetworkMode: 'none'` - no network access possible
 - **Token redaction**: Plex tokens are never logged or exposed to the frontend
 - **Path traversal protection**: Image serving validates paths to prevent directory traversal
+- **Read-only mounts**: User assets and fonts are mounted read-only into containers
 
 ## License
 

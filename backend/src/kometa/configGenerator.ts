@@ -5,12 +5,16 @@ import { FetchedArtwork } from '../plex/fetchArtwork.js';
 
 export interface GeneratedConfig {
   configYaml: string;
-  rendererScript: string;
+  rendererScript: string;  // Kept for interface compatibility
   targetMapping: Record<string, { inputPath: string; outputPath: string }>;
 }
 
 /**
  * Generate a preview-only Kometa config that renders overlays without modifying Plex
+ *
+ * This config is used by the Kometa-based preview renderer to apply overlays
+ * to local images. It extracts overlay definitions from the user's config
+ * and generates a preview-safe configuration.
  */
 export function generatePreviewConfig(
   originalConfig: KometaConfig,
@@ -31,13 +35,13 @@ export function generatePreviewConfig(
     }
   }
 
-  // Generate a preview-safe config
-  // This config is designed to work with our custom renderer script
+  // Generate a preview-safe config for the Kometa-based renderer
   const previewConfig = buildPreviewConfig(originalConfig, targets, targetMapping);
   const configYaml = stringifyYaml(previewConfig);
 
-  // Generate the renderer script that will apply overlays to local images
-  const rendererScript = generateRendererScript(targets, targetMapping, originalConfig);
+  // The renderer script is no longer used - we use Kometa's actual renderer
+  // Keeping for interface compatibility
+  const rendererScript = '';
 
   return {
     configYaml,
