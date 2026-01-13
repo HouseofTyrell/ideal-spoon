@@ -106,13 +106,23 @@ export class KometaRunner extends EventEmitter {
 
       // Create container using Kometa-based renderer
       // The entrypoint in the renderer image is already set to run the preview script
+      //
+      // NETWORK CONFIGURATION:
+      // The container needs network access because Kometa must read library metadata
+      // from Plex. However, Plex WRITES are blocked by the proxy mechanism:
+      //   1. The proxy runs inside the container at 127.0.0.1:32500
+      //   2. kometa_run.yml sets plex.url to the proxy URL (not real Plex)
+      //   3. The proxy forwards GET/HEAD to real Plex (reads allowed)
+      //   4. The proxy blocks PUT/POST/PATCH/DELETE (writes blocked + captured)
+      //
+      // This provides read-only access to Plex with all writes safely blocked.
       const container = await this.docker.createContainer({
         Image: this.config.kometaImage,
         Cmd: ['--job', '/jobs'],  // Arguments passed to preview_entrypoint.py
         HostConfig: {
           Binds: binds,
           AutoRemove: false,
-          NetworkMode: 'none', // No network access for safety - preview is fully offline
+          NetworkMode: 'bridge', // Network required for Plex reads; writes blocked by proxy
         },
         Env: [
           'PYTHONUNBUFFERED=1',
