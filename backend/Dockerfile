@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci
+RUN npm install
 
 # Copy source
 COPY . .
@@ -25,7 +25,7 @@ RUN apk add --no-cache docker-cli
 
 # Copy package files and install production dependencies only
 COPY package*.json ./
-RUN npm ci --production
+RUN npm install --omit=dev
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
