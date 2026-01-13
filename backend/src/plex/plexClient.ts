@@ -90,10 +90,29 @@ export class PlexClient {
   }
 
   /**
+   * Get library sections
+   */
+  async getLibrarySections(): Promise<Array<{ key: string; type: string; title: string }>> {
+    interface PlexSectionsResponse {
+      MediaContainer: {
+        Directory?: Array<{
+          key: string;
+          type: string;
+          title: string;
+        }>;
+      };
+    }
+
+    const response = await this.request<PlexSectionsResponse>('/library/sections');
+    return response.MediaContainer?.Directory || [];
+  }
+
+  /**
    * Search for movies by title and optional year
+   * Uses section-based listing with title filtering for reliability
    */
   async searchMovies(title: string, year?: number): Promise<PlexMediaItem[]> {
-    interface PlexSearchResponse {
+    interface PlexListResponse {
       MediaContainer: {
         Metadata?: Array<{
           ratingKey: string;
@@ -107,38 +126,73 @@ export class PlexClient {
       };
     }
 
-    const searchPath = `/library/search?query=${encodeURIComponent(title)}&type=1`; // type=1 is movie
-    const response = await this.request<PlexSearchResponse>(searchPath);
-    const metadata = response.MediaContainer?.Metadata || [];
+    // Get movie sections
+    const sections = await this.getLibrarySections();
+    const movieSections = sections.filter(s => s.type === 'movie');
 
-    const items: PlexMediaItem[] = metadata
-      .filter((m) => m.type === 'movie')
-      .map((m) => ({
-        ratingKey: m.ratingKey,
-        key: m.key,
-        type: 'movie' as const,
-        title: m.title,
-        year: m.year,
-        thumb: m.thumb,
-        art: m.art,
-      }));
+    const allItems: PlexMediaItem[] = [];
+    const titleLower = title.toLowerCase();
+
+    for (const section of movieSections) {
+      // Use section-specific search or list all and filter
+      // Try section search first
+      try {
+        const searchPath = `/library/sections/${section.key}/all?title=${encodeURIComponent(title)}`;
+        const response = await this.request<PlexListResponse>(searchPath);
+        const metadata = response.MediaContainer?.Metadata || [];
+
+        for (const m of metadata) {
+          if (m.type === 'movie' && m.title.toLowerCase().includes(titleLower)) {
+            allItems.push({
+              ratingKey: m.ratingKey,
+              key: m.key,
+              type: 'movie' as const,
+              title: m.title,
+              year: m.year,
+              thumb: m.thumb,
+              art: m.art,
+            });
+          }
+        }
+      } catch {
+        // If section search fails, try listing all (for smaller libraries)
+        const listPath = `/library/sections/${section.key}/all`;
+        const response = await this.request<PlexListResponse>(listPath);
+        const metadata = response.MediaContainer?.Metadata || [];
+
+        for (const m of metadata) {
+          if (m.type === 'movie' && m.title.toLowerCase().includes(titleLower)) {
+            allItems.push({
+              ratingKey: m.ratingKey,
+              key: m.key,
+              type: 'movie' as const,
+              title: m.title,
+              year: m.year,
+              thumb: m.thumb,
+              art: m.art,
+            });
+          }
+        }
+      }
+    }
 
     // Filter by year if provided
     if (year) {
-      const exactMatch = items.filter((i) => i.year === year);
+      const exactMatch = allItems.filter((i) => i.year === year);
       if (exactMatch.length > 0) {
         return exactMatch;
       }
     }
 
-    return items;
+    return allItems;
   }
 
   /**
    * Search for TV shows by title
+   * Uses section-based listing with title filtering for reliability
    */
   async searchShows(title: string): Promise<PlexMediaItem[]> {
-    interface PlexSearchResponse {
+    interface PlexListResponse {
       MediaContainer: {
         Metadata?: Array<{
           ratingKey: string;
@@ -152,21 +206,56 @@ export class PlexClient {
       };
     }
 
-    const searchPath = `/library/search?query=${encodeURIComponent(title)}&type=2`; // type=2 is show
-    const response = await this.request<PlexSearchResponse>(searchPath);
-    const metadata = response.MediaContainer?.Metadata || [];
+    // Get show sections
+    const sections = await this.getLibrarySections();
+    const showSections = sections.filter(s => s.type === 'show');
 
-    return metadata
-      .filter((m) => m.type === 'show')
-      .map((m) => ({
-        ratingKey: m.ratingKey,
-        key: m.key,
-        type: 'show' as const,
-        title: m.title,
-        year: m.year,
-        thumb: m.thumb,
-        art: m.art,
-      }));
+    const allItems: PlexMediaItem[] = [];
+    const titleLower = title.toLowerCase();
+
+    for (const section of showSections) {
+      // Use section-specific search or list all and filter
+      try {
+        const searchPath = `/library/sections/${section.key}/all?title=${encodeURIComponent(title)}`;
+        const response = await this.request<PlexListResponse>(searchPath);
+        const metadata = response.MediaContainer?.Metadata || [];
+
+        for (const m of metadata) {
+          if (m.type === 'show' && m.title.toLowerCase().includes(titleLower)) {
+            allItems.push({
+              ratingKey: m.ratingKey,
+              key: m.key,
+              type: 'show' as const,
+              title: m.title,
+              year: m.year,
+              thumb: m.thumb,
+              art: m.art,
+            });
+          }
+        }
+      } catch {
+        // If section search fails, try listing all
+        const listPath = `/library/sections/${section.key}/all`;
+        const response = await this.request<PlexListResponse>(listPath);
+        const metadata = response.MediaContainer?.Metadata || [];
+
+        for (const m of metadata) {
+          if (m.type === 'show' && m.title.toLowerCase().includes(titleLower)) {
+            allItems.push({
+              ratingKey: m.ratingKey,
+              key: m.key,
+              type: 'show' as const,
+              title: m.title,
+              year: m.year,
+              thumb: m.thumb,
+              art: m.art,
+            });
+          }
+        }
+      }
+    }
+
+    return allItems;
   }
 
   /**
