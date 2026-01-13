@@ -5,8 +5,9 @@ node_modules/
 dist/
 build/
 
-# Runtime directories (root level only - jobs data)
+# Runtime directories (root level only)
 /jobs/
+/cache/
 
 # Environment files
 .env

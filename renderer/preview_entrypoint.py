@@ -1586,7 +1586,7 @@ def generate_proxy_config(job_path: Path, preview_config: Dict[str, Any], proxy_
 
     kometa_config['settings'] = {
         'cache': cache_enabled,
-        'cache_expiration': 1440 if cache_enabled else 0,  # 24 hours in minutes
+        'cache_expiration': 43200 if cache_enabled else 0,  # 30 days in minutes
         'asset_folders': False,
         'create_asset_folders': False,
         'prioritize_assets': False,
