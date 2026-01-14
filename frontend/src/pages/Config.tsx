@@ -2,7 +2,10 @@ import { useState } from 'react'
 import ConfigUploader from '../components/ConfigUploader'
 import PlexCredentialsForm from '../components/PlexCredentialsForm'
 import OverlayEditor from '../components/OverlayEditor'
+import TemplateSelector from '../components/TemplateSelector'
 import { ConfigAnalysis, runSystemAction, SystemAction, SystemActionResult } from '../api/client'
+import { OverlayTemplate } from '../data/overlayTemplates'
+import { OverlayConfig } from '../types/overlayConfig'
 import './Config.css'
 
 type EntryMode = 'choice' | 'import' | 'scratch'
@@ -24,6 +27,8 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
   const [systemAction, setSystemAction] = useState<SystemAction | null>(null)
   const [systemResult, setSystemResult] = useState<SystemActionResult | null>(null)
   const [systemError, setSystemError] = useState<string | null>(null)
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false)
+  const [initialOverlays, setInitialOverlays] = useState<OverlayConfig[]>([])
 
   const handleConfigUploaded = (newAnalysis: ConfigAnalysis, yaml: string) => {
     setAnalysis(newAnalysis)
@@ -41,12 +46,23 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
     setAnalysis(newAnalysis)
     setConfigYaml(yaml)
     setEntryMode('scratch')
+    setShowTemplateSelector(true) // Show template selector after credentials success
     onConfigUpdate(
       newAnalysis.profileId,
       yaml,
       newAnalysis.libraryNames,
       newAnalysis.overlayFiles
     )
+  }
+
+  const handleTemplateSelect = (template: OverlayTemplate) => {
+    setInitialOverlays(template.overlays())
+    setShowTemplateSelector(false)
+  }
+
+  const handleTemplateSkip = () => {
+    setInitialOverlays([])
+    setShowTemplateSelector(false)
   }
 
   const handleConfigEdit = (yaml: string) => {
@@ -65,6 +81,8 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
     setEntryMode('choice')
     setAnalysis(null)
     setConfigYaml('')
+    setShowTemplateSelector(false)
+    setInitialOverlays([])
   }
 
   const triggerSystemAction = async (action: SystemAction) => {
@@ -152,6 +170,27 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
               </p>
             </div>
           </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Show template selector after Plex credentials are entered (scratch flow)
+  if (entryMode === 'scratch' && analysis && showTemplateSelector) {
+    return (
+      <div className="page">
+        <div>
+          <h1 className="page-title">Choose Your Starting Point</h1>
+          <p className="page-description">
+            Select a template to get started quickly, or create your own from scratch
+          </p>
+        </div>
+
+        <div className="template-selector-wrapper">
+          <TemplateSelector
+            onSelect={handleTemplateSelect}
+            onSkip={handleTemplateSkip}
+          />
         </div>
       </div>
     )
@@ -267,6 +306,7 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
               overlayYaml={analysis.overlayYaml}
               onEdit={handleConfigEdit}
               fullConfig={configYaml}
+              initialOverlays={entryMode === 'scratch' ? initialOverlays : undefined}
             />
           )}
         </div>

@@ -6,15 +6,16 @@ interface OverlayEditorProps {
   overlayYaml: string
   onEdit: (fullConfig: string) => void
   fullConfig: string
+  initialOverlays?: OverlayConfig[]
 }
 
 type EditorMode = 'visual' | 'raw'
 
-function OverlayEditor({ overlayYaml, onEdit, fullConfig }: OverlayEditorProps) {
+function OverlayEditor({ overlayYaml, onEdit, fullConfig, initialOverlays = [] }: OverlayEditorProps) {
   const [mode, setMode] = useState<EditorMode>('visual')
   const [editedYaml, setEditedYaml] = useState(overlayYaml)
   const [isRawEditing, setIsRawEditing] = useState(false)
-  const [visualOverlays, setVisualOverlays] = useState<OverlayConfig[]>([])
+  const [visualOverlays, setVisualOverlays] = useState<OverlayConfig[]>(initialOverlays)
 
   const handleRawSave = useCallback(() => {
     // For now, pass the full config back unchanged
