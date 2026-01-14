@@ -52,6 +52,14 @@ function PreviewPage({ profileId, configYaml }: PreviewPageProps) {
       setJobId(result.jobId)
       setLogs([{ type: 'log', timestamp: new Date().toISOString(), message: `Job started: ${result.jobId}` }])
 
+      // Fetch artifacts immediately to show "before" images
+      try {
+        const initialArtifacts = await getJobArtifacts(result.jobId)
+        setArtifacts(initialArtifacts)
+      } catch {
+        // Artifacts may not be ready yet, polling will pick them up
+      }
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start preview')
       setIsRunning(false)
@@ -99,16 +107,21 @@ function PreviewPage({ profileId, configYaml }: PreviewPageProps) {
     }
   }, [])
 
-  // Poll for status while running
+  // Poll for status AND artifacts while running (shows draft images as they appear)
   useEffect(() => {
     if (!jobId || !isRunning) return
 
     const interval = setInterval(async () => {
       try {
-        const statusResult = await getJobStatus(jobId)
+        // Fetch both status and artifacts to show draft images immediately
+        const [statusResult, artifactsResult] = await Promise.all([
+          getJobStatus(jobId),
+          getJobArtifacts(jobId),
+        ])
         setStatus(statusResult)
+        setArtifacts(artifactsResult)
       } catch (err) {
-        console.error('Status poll failed:', err)
+        console.error('Status/artifacts poll failed:', err)
       }
     }, 2000)
 
@@ -116,6 +129,17 @@ function PreviewPage({ profileId, configYaml }: PreviewPageProps) {
   }, [jobId, isRunning])
 
   const hasConfig = !!configYaml
+
+  // Helper to look up artifact URLs for a target
+  const getArtifactUrls = useCallback((targetId: string): { beforeUrl?: string; afterUrl?: string } => {
+    if (!artifacts?.items) return {}
+    const item = artifacts.items.find((i) => i.id === targetId)
+    if (!item) return {}
+    return {
+      beforeUrl: item.beforeUrl || undefined,
+      afterUrl: item.afterUrl || undefined,
+    }
+  }, [artifacts])
 
   return (
     <div className="page preview-page">
@@ -183,18 +207,21 @@ function PreviewPage({ profileId, configYaml }: PreviewPageProps) {
 
       <div className="preview-content">
         <div className="preview-grid">
-          {PREVIEW_TARGETS.map((target) => (
-            <PreviewTile
-              key={target.id}
-              targetId={target.id}
-              label={target.label}
-              type={target.type}
-              beforeUrl={artifacts?.before[target.id]}
-              afterUrl={artifacts?.after[target.id]}
-              isLoading={isRunning}
-              jobId={jobId}
-            />
-          ))}
+          {PREVIEW_TARGETS.map((target) => {
+            const urls = getArtifactUrls(target.id)
+            return (
+              <PreviewTile
+                key={target.id}
+                targetId={target.id}
+                label={target.label}
+                type={target.type}
+                beforeUrl={urls.beforeUrl}
+                afterUrl={urls.afterUrl}
+                isLoading={isRunning}
+                jobId={jobId}
+              />
+            )
+          })}
         </div>
 
         <LogPanel logs={logs} />

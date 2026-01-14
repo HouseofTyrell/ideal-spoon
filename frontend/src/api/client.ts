@@ -29,10 +29,19 @@ export interface JobStatus {
   }>;
 }
 
+export interface JobArtifactItem {
+  id: string;
+  title: string;
+  type: string;
+  beforeUrl: string;
+  afterUrl: string;
+  baseSource: string;
+  warnings: string[];
+}
+
 export interface JobArtifacts {
-  before: Record<string, string>;
-  after: Record<string, string>;
-  logs: string;
+  jobId: string;
+  items: JobArtifactItem[];
 }
 
 export interface JobEvent {
