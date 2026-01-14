@@ -1110,6 +1110,10 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
     forward_request_count: int = 0
     blocked_metadata_count: int = 0
 
+    # H3/H4: Diagnostic tracking
+    zero_match_searches: int = 0  # H4: Count of searches returning 0 items
+    type_mismatches: List[Dict[str, Any]] = []  # H4: Track type mismatch detections
+
     def log_message(self, format, *args):
         """Override to use our logger"""
         logger.debug(f"PROXY: {args[0]}")
@@ -1490,6 +1494,12 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
 
         path_base = path.split('?')[0]
         logger.info(f"MOCK_LIST endpoint={path_base} returned_items={item_count}")
+
+        # H3/H4: Track zero-match searches for diagnostic summary
+        if item_count == 0 and query:
+            with self.data_lock:
+                self.zero_match_searches += 1
+            logger.warning(f"ZERO_MATCH_SEARCH query={query} endpoint={path_base}")
 
         with self.data_lock:
             self.mock_list_requests.append({
@@ -2025,6 +2035,8 @@ class TMDbProxyHandler(BaseHTTPRequestHandler):
     total_requests: int = 0
     cache_hits: int = 0
     skipped_non_overlay: int = 0
+    skipped_tvdb_conversions: int = 0  # H1: Track skipped TMDb → TVDb conversions
+    tvdb_skip_logged: bool = False  # H1: Track if we've logged the skip message
     data_lock = threading.Lock()
 
     # Request deduplication cache: fingerprint -> (response_body, status_code, headers)
@@ -2067,6 +2079,18 @@ class TMDbProxyHandler(BaseHTTPRequestHandler):
                     self.skipped_non_overlay += 1
                 # Return empty results
                 self._send_empty_tmdb_response()
+                return
+
+            # H1: In FAST mode, skip TMDb → TVDb conversion requests (external_ids for TV shows)
+            if self.fast_mode and self._is_tvdb_conversion_request(path):
+                with self.data_lock:
+                    self.skipped_tvdb_conversions += 1
+                    # Log once per run (not per item)
+                    if not self.tvdb_skip_logged:
+                        logger.info("FAST_PREVIEW: skipped TMDb→TVDb conversions (external_ids)")
+                        self.tvdb_skip_logged = True
+                # Return empty external_ids response
+                self._send_empty_external_ids_response()
                 return
 
             # G1: Check deduplication cache
@@ -2274,6 +2298,67 @@ class TMDbProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(response_body)
 
+    def _is_tvdb_conversion_request(self, path: str) -> bool:
+        """
+        H1: Detect if this is a TMDb → TVDb ID conversion request.
+
+        In FAST mode, we skip these because:
+        - TV show external_ids lookups are used to get TVDb IDs
+        - TVDb ID lookups add significant latency (external API calls)
+        - Overlays typically don't require TVDb IDs for preview rendering
+
+        Returns True for:
+        - /tv/{id}/external_ids - TV show external IDs (includes tvdb_id)
+        - /find/{external_id}?external_source=tvdb_id - TVDb → TMDb lookups
+        """
+        path_base = path.split('?')[0]
+
+        # Match /tv/{id}/external_ids
+        if '/tv/' in path_base and '/external_ids' in path_base:
+            return True
+
+        # Match /find/ with tvdb_id source
+        if '/find/' in path_base:
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(path)
+            query_params = parse_qs(parsed.query)
+            external_source = query_params.get('external_source', [''])[0]
+            if external_source == 'tvdb_id':
+                return True
+
+        return False
+
+    def _send_empty_external_ids_response(self):
+        """
+        H1: Send an empty external_ids response for suppressed conversion requests.
+
+        Returns a valid external_ids response with null TVDb ID, so Kometa
+        can continue without error but won't attempt further TVDb operations.
+        """
+        import json
+
+        # Empty external_ids response structure
+        empty_response = {
+            'id': None,
+            'imdb_id': None,
+            'freebase_mid': None,
+            'freebase_id': None,
+            'tvdb_id': None,
+            'tvrage_id': None,
+            'wikidata_id': None,
+            'facebook_id': None,
+            'instagram_id': None,
+            'twitter_id': None
+        }
+
+        response_body = json.dumps(empty_response).encode('utf-8')
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json;charset=utf-8')
+        self.send_header('Content-Length', str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
+
     def _forward_to_tmdb(self, method: str, path: str) -> Tuple[bytes, int, List[Tuple[str, str]]]:
         """Forward request to real TMDb API"""
         # TMDb API host
@@ -2427,6 +2512,7 @@ class TMDbProxy:
                 'capped_requests': TMDbProxyHandler.capped_requests.copy(),
                 'cache_hits': TMDbProxyHandler.cache_hits,
                 'skipped_non_overlay': TMDbProxyHandler.skipped_non_overlay,
+                'skipped_tvdb_conversions': TMDbProxyHandler.skipped_tvdb_conversions,  # H1
                 'cache_size': len(TMDbProxyHandler.request_cache),
             }
 
@@ -2502,6 +2588,9 @@ class PlexProxy:
         PlexProxyHandler.parent_rating_keys = set()
         PlexProxyHandler.forward_request_count = 0
         PlexProxyHandler.blocked_metadata_count = 0
+        # H3/H4: Reset diagnostic tracking
+        PlexProxyHandler.zero_match_searches = 0
+        PlexProxyHandler.type_mismatches = []
 
     @property
     def proxy_url(self) -> str:
@@ -2581,6 +2670,16 @@ class PlexProxy:
         """Return set of dynamically learned parent ratingKeys"""
         with PlexProxyHandler.data_lock:
             return PlexProxyHandler.parent_rating_keys.copy()
+
+    def get_zero_match_searches(self) -> int:
+        """H4: Return count of zero-match searches"""
+        with PlexProxyHandler.data_lock:
+            return PlexProxyHandler.zero_match_searches
+
+    def get_type_mismatches(self) -> List[Dict[str, Any]]:
+        """H4: Return list of detected type mismatches"""
+        with PlexProxyHandler.data_lock:
+            return PlexProxyHandler.type_mismatches.copy()
 
 
 # ============================================================================
@@ -3096,6 +3195,9 @@ def main():
         forward_count = proxy.get_forward_request_count()
         blocked_metadata_count = proxy.get_blocked_metadata_count()
         learned_parents = proxy.get_learned_parent_keys()
+        # H3/H4: Get diagnostic data
+        zero_match_searches = proxy.get_zero_match_searches()
+        type_mismatches = proxy.get_type_mismatches()
 
         logger.info(f"Blocked {len(blocked_requests)} write attempts")
         logger.info(f"Captured {len(captured_uploads)} uploads")
@@ -3140,11 +3242,21 @@ def main():
                     logger.info(
                         f"  {req.get('path')}: {req.get('original_total')} -> {req.get('capped_to')}"
                     )
-            # G1/G2: Log deduplication and suppression stats
+            # G1/G2/H1: Log deduplication and suppression stats
             if tmdb_stats.get('cache_hits', 0) > 0:
                 logger.info(f"TMDb requests deduplicated (cache hits): {tmdb_stats['cache_hits']}")
             if tmdb_stats.get('skipped_non_overlay', 0) > 0:
                 logger.info(f"TMDb non-overlay discover skipped: {tmdb_stats['skipped_non_overlay']}")
+            if tmdb_stats.get('skipped_tvdb_conversions', 0) > 0:
+                logger.info(f"TMDb→TVDb conversions skipped: {tmdb_stats['skipped_tvdb_conversions']}")
+
+        # H3/H4: Log diagnostic warnings
+        if zero_match_searches > 0:
+            logger.warning(f"DIAGNOSTIC: {zero_match_searches} search queries returned 0 results")
+        if type_mismatches:
+            logger.warning(f"DIAGNOSTIC: {len(type_mismatches)} type mismatches detected")
+            for mismatch in type_mismatches[:5]:  # Limit to first 5
+                logger.warning(f"  {mismatch.get('description', mismatch)}")
 
         # Write summary
         render_success = exit_code == 0 and len(missing_targets) == 0 and len(exported_files) > 0
@@ -3161,7 +3273,7 @@ def main():
             'exported_files': exported_files,
             'missing_targets': missing_targets,
             'output_files': [f.name for f in output_dir.glob('*_after.*')],
-            # Preview accuracy mode statistics (G1/G2/G3)
+            # Preview accuracy mode statistics (G1/G2/G3/H1)
             'preview_accuracy': {
                 'mode': PREVIEW_ACCURACY,
                 'external_id_limit': PREVIEW_EXTERNAL_ID_LIMIT,
@@ -3175,6 +3287,8 @@ def main():
                 'tmdb_cache_size': tmdb_stats.get('cache_size', 0),
                 # G2: Non-overlay discover suppression
                 'tmdb_skipped_non_overlay': tmdb_stats.get('skipped_non_overlay', 0),
+                # H1: TVDb conversion suppression
+                'tmdb_skipped_tvdb_conversions': tmdb_stats.get('skipped_tvdb_conversions', 0),
             },
             # Mock library mode statistics
             'mock_mode': {
@@ -3192,6 +3306,12 @@ def main():
                 'allowed_count': len(allowed_rating_keys),
                 'filtered_requests': filtered_requests,
                 'filtered_requests_count': len(filtered_requests),
+            },
+            # H3/H4: Diagnostic information
+            'diagnostics': {
+                'zero_match_searches': zero_match_searches,
+                'type_mismatches': type_mismatches,
+                'type_mismatches_count': len(type_mismatches),
             },
         }
 

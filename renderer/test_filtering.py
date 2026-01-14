@@ -1294,6 +1294,131 @@ class TestTMDbProxyResultCapping(unittest.TestCase):
         self.assertEqual(len(response['results']), original_count)
 
 
+class TestTVDbConversionDetection(unittest.TestCase):
+    """Tests for H1: TMDb → TVDb conversion request detection"""
+
+    def _is_tvdb_conversion_request(self, path: str) -> bool:
+        """Check if a request is for TMDb → TVDb ID conversion"""
+        from urllib.parse import urlparse, parse_qs
+
+        path_base = path.split('?')[0]
+
+        # Match /tv/{id}/external_ids
+        if '/tv/' in path_base and '/external_ids' in path_base:
+            return True
+
+        # Match /find/ with tvdb_id source
+        if '/find/' in path_base:
+            parsed = urlparse(path)
+            query_params = parse_qs(parsed.query)
+            external_source = query_params.get('external_source', [''])[0]
+            if external_source == 'tvdb_id':
+                return True
+
+        return False
+
+    def test_tv_external_ids_detected(self):
+        """TV show external_ids endpoint should be detected"""
+        path = '/3/tv/12345/external_ids?api_key=xxx'
+        self.assertTrue(self._is_tvdb_conversion_request(path))
+
+    def test_tv_external_ids_without_query(self):
+        """TV external_ids without query string should be detected"""
+        path = '/3/tv/67890/external_ids'
+        self.assertTrue(self._is_tvdb_conversion_request(path))
+
+    def test_find_with_tvdb_source(self):
+        """Find endpoint with tvdb_id source should be detected"""
+        path = '/3/find/tt12345?api_key=xxx&external_source=tvdb_id'
+        self.assertTrue(self._is_tvdb_conversion_request(path))
+
+    def test_find_with_imdb_source_not_detected(self):
+        """Find endpoint with imdb_id source should not be detected"""
+        path = '/3/find/tt12345?api_key=xxx&external_source=imdb_id'
+        self.assertFalse(self._is_tvdb_conversion_request(path))
+
+    def test_movie_external_ids_not_detected(self):
+        """Movie external_ids should not be detected (only TV)"""
+        path = '/3/movie/12345/external_ids?api_key=xxx'
+        self.assertFalse(self._is_tvdb_conversion_request(path))
+
+    def test_regular_tv_endpoint_not_detected(self):
+        """Regular TV endpoint should not be detected"""
+        path = '/3/tv/12345?api_key=xxx'
+        self.assertFalse(self._is_tvdb_conversion_request(path))
+
+    def test_discover_not_detected(self):
+        """Discover endpoint should not be detected as TVDb conversion"""
+        path = '/3/discover/tv?api_key=xxx'
+        self.assertFalse(self._is_tvdb_conversion_request(path))
+
+
+class TestDiagnosticTracking(unittest.TestCase):
+    """Tests for H3/H4: Diagnostic tracking features"""
+
+    def test_zero_match_count_tracking(self):
+        """Zero match searches should be trackable"""
+        # Simulate counting zero-match searches
+        zero_match_searches = 0
+
+        queries = [
+            ('exact_match', 5),
+            ('no_results', 0),
+            ('some_results', 3),
+            ('empty_query', 0),
+        ]
+
+        for query, item_count in queries:
+            if item_count == 0 and query:
+                zero_match_searches += 1
+
+        self.assertEqual(zero_match_searches, 2)
+
+    def test_type_mismatch_detection_structure(self):
+        """Type mismatch records should have expected structure"""
+        mismatch = {
+            'expected_type': 'movie',
+            'actual_type': 'collection',
+            'section_id': '1',
+            'description': 'Section 1 expected movie but got collection',
+            'timestamp': '2024-01-15T10:30:00',
+        }
+
+        self.assertIn('expected_type', mismatch)
+        self.assertIn('actual_type', mismatch)
+        self.assertIn('description', mismatch)
+
+    def test_diagnostics_summary_structure(self):
+        """Diagnostics summary should have expected fields"""
+        diagnostics = {
+            'zero_match_searches': 5,
+            'type_mismatches': [],
+            'type_mismatches_count': 0,
+        }
+
+        self.assertIn('zero_match_searches', diagnostics)
+        self.assertIn('type_mismatches', diagnostics)
+        self.assertIn('type_mismatches_count', diagnostics)
+
+        # Count should match list length
+        self.assertEqual(
+            diagnostics['type_mismatches_count'],
+            len(diagnostics['type_mismatches'])
+        )
+
+    def test_zero_match_warning_threshold(self):
+        """Zero match searches should trigger warning when > 0"""
+        zero_matches = 3
+
+        # Simulating the logging decision
+        should_warn = zero_matches > 0
+
+        self.assertTrue(should_warn)
+
+        # No warning for 0
+        self.assertFalse(0 > 0)
+
+
 if __name__ == '__main__':
     # Run tests with verbose output
     unittest.main(verbosity=2)

@@ -544,6 +544,52 @@ In FAST mode, TMDb discover requests for non-overlay contexts are suppressed:
 
 This ensures collections, charts, and defaults builders don't slow down preview mode.
 
+#### H1: TVDb Conversion Suppression
+
+In FAST mode, TMDb → TVDb ID conversion requests are skipped:
+
+**Suppressed requests** (return empty external_ids):
+- `/tv/{id}/external_ids` - TV show external IDs (used to get TVDb IDs)
+- `/find/{external_id}?external_source=tvdb_id` - TVDb → TMDb lookups
+
+**Why suppress?**
+- TVDb ID lookups add significant latency (external API calls)
+- Overlays typically don't require TVDb IDs for preview rendering
+- Show identification by TMDb ID is sufficient for previews
+
+**Logged once per run:**
+```
+| INFO     | FAST_PREVIEW: skipped TMDb→TVDb conversions (external_ids)
+```
+
+**Summary stats:**
+```json
+{
+  "preview_accuracy": {
+    "tmdb_skipped_tvdb_conversions": 15
+  }
+}
+```
+
+### H2: Kometa Internal Logging (Cannot Be Suppressed)
+
+Some log messages originate from Kometa internals and cannot be suppressed by the preview proxy:
+
+**Examples of unsuppressed Kometa messages:**
+- `"No Items found for Overlay File Overlay File 1 or it was excluded by the overlay filter"` - Kometa's internal builder evaluation
+- `"Collection was not added to any items"` - Collection builder results
+- `"No Overlay Images found"` - Overlay file evaluation
+
+**Why not suppressed?**
+- These messages are generated inside the Kometa subprocess
+- The proxy only controls network traffic, not Kometa's internal logging
+- Suppressing would require modifying Kometa source code
+
+**Workaround:**
+- These messages are informational warnings, not errors
+- Preview can still succeed even with these warnings
+- Filter logs by `CAPTURED_UPLOAD` or `success: true` for results
+
 ## Cache Metadata Validation
 
 The proxy validates metadata responses before caching to prevent parse errors:
