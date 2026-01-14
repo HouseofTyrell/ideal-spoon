@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 import { OverlayConfig } from '../../types/overlayConfig'
 
 interface ActiveOverlaysListProps {
@@ -20,6 +20,9 @@ function ActiveOverlaysList({
   onDelete,
   disabled = false,
 }: ActiveOverlaysListProps) {
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+
   const getPositionLabel = (overlay: OverlayConfig): string => {
     const { horizontalAlign, verticalAlign } = overlay.position
     const vLabel = verticalAlign === 'top' ? 'Top' : verticalAlign === 'bottom' ? 'Bottom' : 'Mid'
@@ -49,6 +52,65 @@ function ActiveOverlaysList({
       onReorder(reweighted)
     },
     [overlays, onReorder, disabled]
+  )
+
+  // Drag and drop handlers
+  const handleDragStart = useCallback(
+    (e: React.DragEvent, index: number) => {
+      if (disabled) return
+      setDraggedIndex(index)
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', index.toString())
+      // Add a slight delay to allow the drag image to be set
+      setTimeout(() => {
+        const target = e.target as HTMLElement
+        target.classList.add('dragging')
+      }, 0)
+    },
+    [disabled]
+  )
+
+  const handleDragEnd = useCallback(() => {
+    setDraggedIndex(null)
+    setDragOverIndex(null)
+  }, [])
+
+  const handleDragOver = useCallback(
+    (e: React.DragEvent, index: number) => {
+      e.preventDefault()
+      if (draggedIndex === null || draggedIndex === index) return
+      setDragOverIndex(index)
+    },
+    [draggedIndex]
+  )
+
+  const handleDragLeave = useCallback(() => {
+    setDragOverIndex(null)
+  }, [])
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent, dropIndex: number) => {
+      e.preventDefault()
+      if (draggedIndex === null || draggedIndex === dropIndex || disabled) return
+
+      const newOverlays = [...overlays]
+      const [removed] = newOverlays.splice(draggedIndex, 1)
+      newOverlays.splice(dropIndex, 0, removed)
+
+      // Update weights based on new order
+      const reweighted = newOverlays.map((o, i) => ({
+        ...o,
+        grouping: {
+          ...o.grouping,
+          weight: (newOverlays.length - i) * 10,
+        },
+      }))
+
+      onReorder(reweighted)
+      setDraggedIndex(null)
+      setDragOverIndex(null)
+    },
+    [draggedIndex, overlays, onReorder, disabled]
   )
 
   if (overlays.length === 0) {
@@ -91,9 +153,27 @@ function ActiveOverlaysList({
             key={overlay.id}
             className={`overlay-row ${selectedId === overlay.id ? 'selected' : ''} ${
               !overlay.enabled ? 'disabled-overlay' : ''
+            } ${draggedIndex === index ? 'dragging' : ''} ${
+              dragOverIndex === index ? 'drag-over' : ''
             }`}
             onClick={() => onSelect(overlay.id)}
+            draggable={!disabled}
+            onDragStart={(e) => handleDragStart(e, index)}
+            onDragEnd={handleDragEnd}
+            onDragOver={(e) => handleDragOver(e, index)}
+            onDragLeave={handleDragLeave}
+            onDrop={(e) => handleDrop(e, index)}
           >
+            <div className="drag-handle" title="Drag to reorder">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="9" cy="6" r="2" />
+                <circle cx="15" cy="6" r="2" />
+                <circle cx="9" cy="12" r="2" />
+                <circle cx="15" cy="12" r="2" />
+                <circle cx="9" cy="18" r="2" />
+                <circle cx="15" cy="18" r="2" />
+              </svg>
+            </div>
             <div className="row-checkbox">
               <input
                 type="checkbox"
@@ -221,6 +301,42 @@ function ActiveOverlaysList({
 
         .overlay-row.disabled-overlay {
           opacity: 0.5;
+        }
+
+        .overlay-row.dragging {
+          opacity: 0.5;
+          background-color: var(--bg-tertiary);
+        }
+
+        .overlay-row.drag-over {
+          border-top: 2px solid var(--accent-primary);
+          margin-top: -1px;
+        }
+
+        .overlay-row[draggable="true"] {
+          cursor: grab;
+        }
+
+        .overlay-row[draggable="true"]:active {
+          cursor: grabbing;
+        }
+
+        .drag-handle {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--text-muted);
+          opacity: 0.5;
+          transition: opacity 0.15s;
+          cursor: grab;
+        }
+
+        .overlay-row:hover .drag-handle {
+          opacity: 1;
+        }
+
+        .drag-handle:active {
+          cursor: grabbing;
         }
 
         .row-checkbox {
