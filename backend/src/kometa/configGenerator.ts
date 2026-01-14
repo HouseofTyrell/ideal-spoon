@@ -157,12 +157,10 @@ function buildKometaConfig(
 
         // Only include library if it has overlays after filtering
         if (overlayFiles.length > 0) {
+          // Only include overlay_files - omit operations/collections/metadata
+          // to avoid Kometa validation errors about empty definitions
           libraries[libName] = {
             overlay_files: overlayFiles,
-            // Disable other operations for preview
-            operations: null,
-            collections: null,
-            metadata: null,
           };
         }
       }
