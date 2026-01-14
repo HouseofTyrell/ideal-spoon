@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import BeforeAfter from './BeforeAfter'
 import ComparisonView from './ComparisonView'
 import ZoomableImage from './ZoomableImage'
@@ -6,7 +6,7 @@ import ZoomControls from './ZoomControls'
 import PosterSizeSelector, { POSTER_SIZES, EPISODE_SIZES } from './PosterSizeSelector'
 import FullscreenPreview from './FullscreenPreview'
 
-type ViewMode = 'before' | 'after' | 'compare'
+type ViewMode = 'before' | 'after' | 'compare' | 'animate'
 
 const MIN_ZOOM = 0.5
 const MAX_ZOOM = 4
@@ -47,6 +47,8 @@ function PreviewTile({
   const [zoom, setZoom] = useState(1)
   const [posterSize, setPosterSize] = useState('auto')
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [animateShowAfter, setAnimateShowAfter] = useState(true)
+  const animationIntervalRef = useRef<number | null>(null)
 
   // Get the current poster size dimensions
   const sizes = mediaType === 'episode' ? EPISODE_SIZES : POSTER_SIZES
@@ -65,6 +67,27 @@ function PreviewTile({
   // Reset zoom when switching views or when images change
   useEffect(() => {
     setZoom(1)
+  }, [viewMode, beforeUrl, afterUrl])
+
+  // Animation effect for auto-toggle between before/after
+  useEffect(() => {
+    if (viewMode === 'animate' && beforeUrl && afterUrl) {
+      animationIntervalRef.current = window.setInterval(() => {
+        setAnimateShowAfter((prev) => !prev)
+      }, 1500) // Toggle every 1.5 seconds
+    } else {
+      if (animationIntervalRef.current) {
+        clearInterval(animationIntervalRef.current)
+        animationIntervalRef.current = null
+      }
+    }
+
+    return () => {
+      if (animationIntervalRef.current) {
+        clearInterval(animationIntervalRef.current)
+        animationIntervalRef.current = null
+      }
+    }
   }, [viewMode, beforeUrl, afterUrl])
 
   const handleZoomIn = useCallback(() => {
@@ -141,7 +164,27 @@ function PreviewTile({
           </ZoomableImage>
         )}
 
-        {hasImages && viewMode !== 'compare' && (
+        {hasImages && viewMode === 'animate' && (
+          <ZoomableImage
+            zoom={zoom}
+            onZoomChange={setZoom}
+            minZoom={MIN_ZOOM}
+            maxZoom={MAX_ZOOM}
+          >
+            <div className="animate-container">
+              <BeforeAfter
+                beforeUrl={beforeUrl}
+                afterUrl={afterUrl}
+                showAfter={animateShowAfter}
+              />
+              <div className={`animate-indicator ${animateShowAfter ? 'after' : 'before'}`}>
+                {animateShowAfter ? 'After' : 'Before'}
+              </div>
+            </div>
+          </ZoomableImage>
+        )}
+
+        {hasImages && viewMode !== 'compare' && viewMode !== 'animate' && (
           <ZoomableImage
             zoom={zoom}
             onZoomChange={setZoom}
@@ -180,6 +223,17 @@ function PreviewTile({
                 title={!beforeUrl ? 'Need before image to compare' : 'Side-by-side comparison'}
               >
                 Compare
+              </button>
+              <button
+                className={`toggle-btn ${viewMode === 'animate' ? 'active' : ''}`}
+                onClick={() => setViewMode('animate')}
+                disabled={!beforeUrl || !afterUrl}
+                title={!beforeUrl || !afterUrl ? 'Need both images to animate' : 'Auto-toggle between before and after'}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}>
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+                Auto
               </button>
             </div>
 
@@ -276,6 +330,35 @@ function PreviewTile({
         .tile-image-container.fixed-size {
           aspect-ratio: unset;
           margin: 0 auto;
+        }
+
+        .animate-container {
+          position: relative;
+          width: 100%;
+          height: 100%;
+        }
+
+        .animate-indicator {
+          position: absolute;
+          top: 8px;
+          left: 8px;
+          padding: 0.25rem 0.5rem;
+          font-size: 0.625rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          border-radius: var(--radius-sm);
+          transition: all 0.3s ease;
+        }
+
+        .animate-indicator.before {
+          background-color: var(--bg-secondary);
+          color: var(--text-secondary);
+        }
+
+        .animate-indicator.after {
+          background-color: var(--accent-primary);
+          color: #000;
         }
 
         .tile-placeholder {
