@@ -22,6 +22,7 @@ function ActiveOverlaysList({
 }: ActiveOverlaysListProps) {
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+  const [searchFilter, setSearchFilter] = useState('')
 
   const getPositionLabel = (overlay: OverlayConfig): string => {
     const { horizontalAlign, verticalAlign } = overlay.position
@@ -140,6 +141,14 @@ function ActiveOverlaysList({
     )
   }
 
+  // Filter overlays based on search
+  const filteredOverlays = searchFilter
+    ? overlays.filter((o) =>
+        o.displayName.toLowerCase().includes(searchFilter.toLowerCase()) ||
+        (o.pmmOverlay && o.pmmOverlay.toLowerCase().includes(searchFilter.toLowerCase()))
+      )
+    : overlays
+
   const enabledCount = overlays.filter((o) => o.enabled).length
   const allEnabled = overlays.length > 0 && enabledCount === overlays.length
   const noneEnabled = enabledCount === 0
@@ -214,33 +223,69 @@ function ActiveOverlaysList({
         </div>
       </div>
 
+      {overlays.length > 3 && (
+        <div className="search-bar">
+          <svg className="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" />
+            <path d="m21 21-4.35-4.35" />
+          </svg>
+          <input
+            type="text"
+            className="search-input"
+            placeholder="Filter overlays..."
+            value={searchFilter}
+            onChange={(e) => setSearchFilter(e.target.value)}
+          />
+          {searchFilter && (
+            <button
+              type="button"
+              className="search-clear"
+              onClick={() => setSearchFilter('')}
+              aria-label="Clear search"
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="overlay-list">
-        {overlays.map((overlay, index) => (
+        {filteredOverlays.length === 0 && searchFilter && (
+          <div className="no-results">
+            No overlays match "{searchFilter}"
+          </div>
+        )}
+        {filteredOverlays.map((overlay) => {
+          const originalIndex = overlays.findIndex((o) => o.id === overlay.id)
+          const isFiltering = searchFilter.length > 0
+          return (
           <div
             key={overlay.id}
             className={`overlay-row ${selectedId === overlay.id ? 'selected' : ''} ${
               !overlay.enabled ? 'disabled-overlay' : ''
-            } ${draggedIndex === index ? 'dragging' : ''} ${
-              dragOverIndex === index ? 'drag-over' : ''
+            } ${draggedIndex === originalIndex ? 'dragging' : ''} ${
+              dragOverIndex === originalIndex ? 'drag-over' : ''
             }`}
             onClick={() => onSelect(overlay.id)}
-            draggable={!disabled}
-            onDragStart={(e) => handleDragStart(e, index)}
+            draggable={!disabled && !isFiltering}
+            onDragStart={(e) => handleDragStart(e, originalIndex)}
             onDragEnd={handleDragEnd}
-            onDragOver={(e) => handleDragOver(e, index)}
+            onDragOver={(e) => handleDragOver(e, originalIndex)}
             onDragLeave={handleDragLeave}
-            onDrop={(e) => handleDrop(e, index)}
+            onDrop={(e) => handleDrop(e, originalIndex)}
           >
-            <div className="drag-handle" title="Drag to reorder">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="9" cy="6" r="2" />
-                <circle cx="15" cy="6" r="2" />
-                <circle cx="9" cy="12" r="2" />
-                <circle cx="15" cy="12" r="2" />
-                <circle cx="9" cy="18" r="2" />
-                <circle cx="15" cy="18" r="2" />
-              </svg>
-            </div>
+            {!isFiltering && (
+              <div className="drag-handle" title="Drag to reorder">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="9" cy="6" r="2" />
+                  <circle cx="15" cy="6" r="2" />
+                  <circle cx="9" cy="12" r="2" />
+                  <circle cx="15" cy="12" r="2" />
+                  <circle cx="9" cy="18" r="2" />
+                  <circle cx="15" cy="18" r="2" />
+                </svg>
+              </div>
+            )}
             <div className="row-checkbox">
               <input
                 type="checkbox"
@@ -270,30 +315,34 @@ function ActiveOverlaysList({
             </div>
 
             <div className="row-actions">
-              <button
-                type="button"
-                className="action-btn"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  moveOverlay(index, 'up')
-                }}
-                disabled={disabled || index === 0}
-                title="Move up"
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                className="action-btn"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  moveOverlay(index, 'down')
-                }}
-                disabled={disabled || index === overlays.length - 1}
-                title="Move down"
-              >
-                ↓
-              </button>
+              {!isFiltering && (
+                <>
+                  <button
+                    type="button"
+                    className="action-btn"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      moveOverlay(originalIndex, 'up')
+                    }}
+                    disabled={disabled || originalIndex === 0}
+                    title="Move up"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="action-btn"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      moveOverlay(originalIndex, 'down')
+                    }}
+                    disabled={disabled || originalIndex === overlays.length - 1}
+                    title="Move down"
+                  >
+                    ↓
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 className="action-btn delete"
@@ -308,7 +357,8 @@ function ActiveOverlaysList({
               </button>
             </div>
           </div>
-        ))}
+          )
+        })}
       </div>
 
       <style>{`
@@ -380,6 +430,59 @@ function ActiveOverlaysList({
         .bulk-btn:disabled {
           opacity: 0.4;
           cursor: not-allowed;
+        }
+
+        .search-bar {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          padding: 0.5rem 1rem;
+          background-color: var(--bg-tertiary);
+          border-bottom: 1px solid var(--border-color);
+        }
+
+        .search-icon {
+          color: var(--text-muted);
+          flex-shrink: 0;
+        }
+
+        .search-input {
+          flex: 1;
+          background: none;
+          border: none;
+          outline: none;
+          font-size: 0.8125rem;
+          color: var(--text-primary);
+        }
+
+        .search-input::placeholder {
+          color: var(--text-muted);
+        }
+
+        .search-clear {
+          width: 20px;
+          height: 20px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: none;
+          border: none;
+          color: var(--text-muted);
+          cursor: pointer;
+          font-size: 1rem;
+          border-radius: var(--radius-sm);
+        }
+
+        .search-clear:hover {
+          background-color: var(--bg-primary);
+          color: var(--text-primary);
+        }
+
+        .no-results {
+          padding: 1.5rem;
+          text-align: center;
+          color: var(--text-muted);
+          font-size: 0.875rem;
         }
 
         .overlay-list {
