@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getJobManager } from '../jobs/jobManager.js';
+import { SSE_HEARTBEAT_INTERVAL_MS } from '../constants.js';
 
 const router = Router();
 
@@ -92,17 +93,14 @@ router.get('/events/:jobId', (req: Request, res: Response) => {
 
   jobManager.on(`job:${jobId}`, eventHandler);
 
-  // Handle client disconnect
-  req.on('close', () => {
-    jobManager.off(`job:${jobId}`, eventHandler);
-  });
-
-  // Send heartbeat every 30 seconds
+  // Send heartbeat to keep connection alive
   const heartbeat = setInterval(() => {
     res.write(': heartbeat\n\n');
-  }, 30000);
+  }, SSE_HEARTBEAT_INTERVAL_MS);
 
+  // Handle client disconnect - single listener for cleanup
   req.on('close', () => {
+    jobManager.off(`job:${jobId}`, eventHandler);
     clearInterval(heartbeat);
   });
 });

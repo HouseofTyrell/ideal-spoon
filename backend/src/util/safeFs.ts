@@ -92,10 +92,9 @@ export async function listFiles(dirPath: string): Promise<string[]> {
 /**
  * Get file stats safely
  */
-export async function getStats(filePath: string): Promise<fs.FileHandle | null> {
+export async function getStats(filePath: string): Promise<Awaited<ReturnType<typeof fs.stat>> | null> {
   try {
-    const stats = await fs.stat(filePath);
-    return stats as unknown as fs.FileHandle;
+    return await fs.stat(filePath);
   } catch {
     return null;
   }

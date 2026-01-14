@@ -9,11 +9,12 @@ import previewArtifactsRouter from './api/previewArtifacts.js';
 import systemControlRouter from './api/systemControl.js';
 import { ensureDir } from './util/safeFs.js';
 import { getJobsBasePath, getFontsPath } from './jobs/paths.js';
+import { DEFAULT_PORT, DEFAULT_HOST, DEFAULT_CORS_ORIGIN } from './constants.js';
 
-// Load environment variables from process.env
-const PORT = parseInt(process.env.PORT || '3001', 10);
-const HOST = process.env.HOST || '127.0.0.1';
-const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
+// Load environment variables from process.env (with constants as defaults)
+const PORT = parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
+const HOST = process.env.HOST || DEFAULT_HOST;
+const CORS_ORIGIN = process.env.CORS_ORIGIN || DEFAULT_CORS_ORIGIN;
 
 async function main() {
   // Ensure required directories exist

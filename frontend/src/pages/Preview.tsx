@@ -12,6 +12,7 @@ import {
   JobEvent,
 } from '../api/client'
 import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions'
+import { PREVIEW_TARGETS, filterTargetsByMediaType } from '../constants/previewTargets'
 
 interface PreviewPageProps {
   profileId: string | null
@@ -19,14 +20,6 @@ interface PreviewPageProps {
   libraryNames?: string[]
   overlayFiles?: string[]
 }
-
-const PREVIEW_TARGETS = [
-  { id: 'matrix', label: 'The Matrix (1999)', type: 'Movie', mediaType: 'movie' },
-  { id: 'dune', label: 'Dune (2021)', type: 'Movie', mediaType: 'movie' },
-  { id: 'breakingbad_series', label: 'Breaking Bad', type: 'Series', mediaType: 'show' },
-  { id: 'breakingbad_s01', label: 'Breaking Bad', type: 'Season 1', mediaType: 'season' },
-  { id: 'breakingbad_s01e01', label: 'Breaking Bad', type: 'S01E01', mediaType: 'episode' },
-]
 
 function PreviewPage({
   profileId,
@@ -44,23 +37,8 @@ function PreviewPage({
 
   // Calculate which targets to display based on test options
   const visibleTargets = useMemo(() => {
-    let targets = PREVIEW_TARGETS
-
     // Filter by media types
-    targets = targets.filter((t) => {
-      switch (t.mediaType) {
-        case 'movie':
-          return testOptions.mediaTypes.movies
-        case 'show':
-          return testOptions.mediaTypes.shows
-        case 'season':
-          return testOptions.mediaTypes.seasons
-        case 'episode':
-          return testOptions.mediaTypes.episodes
-        default:
-          return true
-      }
-    })
+    let targets = filterTargetsByMediaType(PREVIEW_TARGETS, testOptions.mediaTypes)
 
     // Filter by selected targets
     if (testOptions.selectedTargets.length > 0) {
@@ -274,8 +252,8 @@ function PreviewPage({
                   key={target.id}
                   targetId={target.id}
                   label={target.label}
-                  type={target.type}
-                  mediaType={target.mediaType as 'movie' | 'show' | 'season' | 'episode'}
+                  type={target.displayType}
+                  mediaType={target.type}
                   beforeUrl={urls.beforeUrl}
                   afterUrl={urls.afterUrl}
                   isLoading={isRunning}
