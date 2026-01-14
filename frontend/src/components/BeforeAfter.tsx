@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 interface BeforeAfterProps {
   beforeUrl?: string
@@ -10,7 +10,15 @@ function BeforeAfter({ beforeUrl, afterUrl, showAfter }: BeforeAfterProps) {
   const [imageLoaded, setImageLoaded] = useState(false)
   const [imageError, setImageError] = useState(false)
 
-  const currentUrl = showAfter ? afterUrl : beforeUrl
+  // When showAfter is true but afterUrl is unavailable, fall back to beforeUrl
+  const currentUrl = showAfter ? (afterUrl || beforeUrl) : beforeUrl
+  const isShowingFallback = showAfter && !afterUrl && !!beforeUrl
+
+  // Reset loading state when URL changes
+  useEffect(() => {
+    setImageLoaded(false)
+    setImageError(false)
+  }, [currentUrl])
 
   if (!currentUrl) {
     return (
@@ -31,6 +39,13 @@ function BeforeAfter({ beforeUrl, afterUrl, showAfter }: BeforeAfterProps) {
       {imageError && (
         <div className="image-error">
           <span>Failed to load image</span>
+        </div>
+      )}
+
+      {isShowingFallback && imageLoaded && (
+        <div className="rendering-overlay">
+          <div className="loading-spinner" />
+          <span>Rendering...</span>
         </div>
       )}
 
@@ -92,6 +107,19 @@ function BeforeAfter({ beforeUrl, afterUrl, showAfter }: BeforeAfterProps) {
 
         .image-error {
           color: var(--text-muted);
+          font-size: 0.875rem;
+        }
+
+        .rendering-overlay {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          background-color: rgba(0, 0, 0, 0.6);
+          color: var(--text-primary);
           font-size: 0.875rem;
         }
 

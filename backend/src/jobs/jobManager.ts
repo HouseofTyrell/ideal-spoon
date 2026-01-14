@@ -365,12 +365,25 @@ class JobManager extends EventEmitter {
     const paths = getJobPaths(jobId);
     const items: JobArtifacts['items'] = [];
 
+    // Supported image extensions (in priority order)
+    const imageExtensions = ['png', 'jpg', 'jpeg', 'webp'];
+
     for (const target of meta.targets) {
       const beforeFile = `${target.id}.jpg`;
-      const afterFile = `${target.id}_after.png`;
-
       const beforePath = path.join(paths.inputDir, beforeFile);
-      const afterPath = path.join(paths.outputDir, afterFile);
+
+      // Find the after file with any supported extension
+      let afterFile = '';
+      let afterUrl = '';
+      for (const ext of imageExtensions) {
+        const candidateFile = `${target.id}_after.${ext}`;
+        const candidatePath = path.join(paths.outputDir, candidateFile);
+        if (await pathExists(candidatePath)) {
+          afterFile = candidateFile;
+          afterUrl = `/api/preview/image/${jobId}/output/${afterFile}`;
+          break;
+        }
+      }
 
       if (await pathExists(beforePath)) {
         items.push({
@@ -378,9 +391,7 @@ class JobManager extends EventEmitter {
           title: target.title,
           type: target.type,
           beforeUrl: `/api/preview/image/${jobId}/input/${beforeFile}`,
-          afterUrl: (await pathExists(afterPath))
-            ? `/api/preview/image/${jobId}/output/${afterFile}`
-            : '',
+          afterUrl,
           baseSource: target.baseSource,
           warnings: target.warnings,
         });

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import BeforeAfter from './BeforeAfter'
 
 interface PreviewTileProps {
@@ -20,7 +20,15 @@ function PreviewTile({
   isLoading,
   jobId,
 }: PreviewTileProps) {
-  const [showAfter, setShowAfter] = useState(true)
+  // Default to "Before" if afterUrl is not available, otherwise show "After"
+  const [showAfter, setShowAfter] = useState(!!afterUrl)
+
+  // Auto-switch to "After" when afterUrl becomes available
+  useEffect(() => {
+    if (afterUrl) {
+      setShowAfter(true)
+    }
+  }, [afterUrl])
 
   const hasImages = beforeUrl || afterUrl
 
