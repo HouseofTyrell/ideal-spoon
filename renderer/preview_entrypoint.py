@@ -23,404 +23,51 @@ Usage:
 """
 
 import argparse
-import cgi
-import hashlib
-import io
 import json
-import logging
 import os
 import re
-import shutil
-import subprocess
 import sys
-import threading
 import traceback
-import xml.etree.ElementTree as ET
 from datetime import datetime
-from email.parser import BytesParser
-from email.policy import default as email_policy
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
-from urllib.parse import urlparse, parse_qs, urlsplit
-import http.client
-import ssl
+from typing import Any, Dict, List, Optional
 
-# Configure logging before any other imports
-logging.basicConfig(
-    level=logging.INFO,
-    format='| %(levelname)-8s | %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
+# Add the renderer directory to the path for direct execution
+_renderer_dir = Path(__file__).parent.resolve()
+if str(_renderer_dir) not in sys.path:
+    sys.path.insert(0, str(_renderer_dir))
+
+# Import from refactored modules
+from constants import (
+    logger,
+    PREVIEW_ACCURACY,
+    PREVIEW_EXTERNAL_ID_LIMIT,
+    PREVIEW_EXTERNAL_PAGES_LIMIT,
+    TMDB_PROXY_ENABLED,
+    FAST_MODE,
+    OUTPUT_CACHE_ENABLED,
 )
-logger = logging.getLogger('KometaPreview')
-
-# Proxy configuration
-PROXY_PORT = 32500
-PROXY_HOST = '127.0.0.1'
-
-# Output caching - skip rendering if config unchanged
-OUTPUT_CACHE_ENABLED = os.environ.get('PREVIEW_OUTPUT_CACHE', '1') == '1'
-
-# ============================================================================
-# Preview Accuracy Mode Configuration
-# ============================================================================
-# PREVIEW_ACCURACY: 'fast' (default) or 'accurate'
-# - fast: Caps external API results (TMDb, Trakt, etc.) to prevent slow expansions
-# - accurate: Full Kometa behavior with all external API expansions
-PREVIEW_ACCURACY = os.environ.get('PREVIEW_ACCURACY', 'fast').lower()
-
-# Fast mode caps - limits for external ID expansions
-PREVIEW_EXTERNAL_ID_LIMIT = int(os.environ.get('PREVIEW_EXTERNAL_ID_LIMIT', '25'))
-PREVIEW_EXTERNAL_PAGES_LIMIT = int(os.environ.get('PREVIEW_EXTERNAL_PAGES_LIMIT', '1'))
-
-# TMDb Proxy configuration (for intercepting TMDb API calls in fast mode)
-TMDB_PROXY_ENABLED = os.environ.get('PREVIEW_TMDB_PROXY', '1') == '1' and PREVIEW_ACCURACY == 'fast'
-TMDB_PROXY_PORT = 8191  # Port for TMDb proxy
-
-
-# ============================================================================
-# Font Configuration (P1)
-# ============================================================================
-# PREVIEW_STRICT_FONTS: If true, fail if required fonts are missing
-# Default: false (log warnings but continue)
-PREVIEW_STRICT_FONTS = os.environ.get('PREVIEW_STRICT_FONTS', '0') == '1'
-
-# Default fallback font path (prefer /fonts if available)
-DEFAULT_FALLBACK_FONT = os.environ.get('PREVIEW_FALLBACK_FONT', '/fonts/Inter-Regular.ttf')
-
-# Common font paths to validate
-COMMON_FONT_PATHS = [
-    '/config/fonts',
-    '/fonts',
-    '/usr/share/fonts',
-]
-
-FALLBACK_FONT_CANDIDATES = [
-    DEFAULT_FALLBACK_FONT,
-    '/fonts/Inter-Regular.ttf',
-    '/config/fonts/Inter-Regular.ttf',
-]
-
-# FAST mode guardrails
-FAST_MODE = PREVIEW_ACCURACY == 'fast'
-
-
-def validate_fonts_at_startup() -> List[str]:
-    """
-    Validate font availability at startup.
-
-    P1 Fix: Check common font directories and log warnings for missing fonts.
-    Returns a list of available font directories.
-    """
-    available_dirs = []
-    missing_dirs = []
-
-    for font_path in COMMON_FONT_PATHS:
-        if Path(font_path).exists():
-            available_dirs.append(font_path)
-            # List available fonts
-            fonts = list(Path(font_path).glob('*.ttf')) + list(Path(font_path).glob('*.otf'))
-            if fonts:
-                logger.info(f"FONT_DIR_FOUND: {font_path} ({len(fonts)} fonts)")
-                for font in fonts[:5]:  # Log first 5
-                    logger.debug(f"  - {font.name}")
-                if len(fonts) > 5:
-                    logger.debug(f"  - ... and {len(fonts) - 5} more")
-            else:
-                logger.warning(f"FONT_DIR_EMPTY: {font_path} exists but contains no fonts")
-        else:
-            missing_dirs.append(font_path)
-
-    if not available_dirs:
-        logger.warning("FONT_WARNING: No font directories found!")
-        logger.warning(f"  Checked: {', '.join(COMMON_FONT_PATHS)}")
-        logger.warning("  Overlay rendering may fail if custom fonts are referenced.")
-        logger.warning("  To fix: Mount font files to /config/fonts or set PREVIEW_FALLBACK_FONT")
-
-    fallback_font = get_fallback_font_path()
-    if Path(fallback_font).exists():
-        logger.info(f"FALLBACK_FONT_OK: {fallback_font}")
-    else:
-        logger.warning(f"FALLBACK_FONT_MISSING: {fallback_font}")
-        if PREVIEW_STRICT_FONTS:
-            raise FileNotFoundError(
-                f"Fallback font not found: {fallback_font}. "
-                f"Set PREVIEW_STRICT_FONTS=0 to continue without fallback font."
-            )
-
-    return available_dirs
-
-
-def normalize_font_path(requested_path: str) -> Path:
-    requested = Path(requested_path)
-    if requested.is_absolute():
-        return requested
-    return Path('/') / requested
-
-
-def get_fallback_font_path() -> str:
-    for candidate in FALLBACK_FONT_CANDIDATES:
-        if candidate and Path(candidate).exists():
-            return candidate
-    return DEFAULT_FALLBACK_FONT
-
-
-def resolve_font_fallback(requested_path: str) -> Optional[str]:
-    """
-    Ensure a requested font path exists, falling back to DEFAULT_FALLBACK_FONT if missing.
-
-    Returns the resolved font path if available, or None if missing and strict mode is disabled.
-    """
-    requested = normalize_font_path(requested_path)
-    if requested.exists():
-        return str(requested)
-
-    fallback_source: Optional[Path] = None
-    for root in ('/fonts', '/config/fonts'):
-        candidate = Path(root) / requested.name
-        if candidate.exists():
-            fallback_source = candidate
-            break
-
-    if fallback_source is None:
-        fallback_source = Path(get_fallback_font_path())
-
-    if not fallback_source.exists():
-        message = f"Fallback font missing: {fallback_source}"
-        if PREVIEW_STRICT_FONTS:
-            raise FileNotFoundError(message)
-        logger.warning(f"FONT_FALLBACK_SKIPPED requested={requested_path} reason=fallback_missing")
-        return None
-
-    requested.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        if requested.exists():
-            return str(requested)
-        shutil.copy2(fallback_source, requested)
-        logger.info(f"FONT_FALLBACK requested={requested_path} fallback={fallback_source}")
-        return str(requested)
-    except Exception as e:
-        if PREVIEW_STRICT_FONTS:
-            raise
-        logger.warning(f"FONT_FALLBACK_FAILED requested={requested_path} error={e}")
-        return None
-
-
-def collect_font_paths(data: Any) -> List[str]:
-    """Collect font paths from nested config data."""
-    font_paths: List[str] = []
-
-    def _walk(value: Any):
-        if isinstance(value, dict):
-            for v in value.values():
-                _walk(v)
-        elif isinstance(value, list):
-            for v in value:
-                _walk(v)
-        elif isinstance(value, str):
-            lower = value.lower()
-            if lower.endswith(('.ttf', '.otf', '.ttc')):
-                font_paths.append(value)
-
-    _walk(data)
-    return font_paths
-
-
-def ensure_font_fallbacks(data: Any) -> int:
-    """Ensure all referenced fonts exist by applying fallbacks when missing."""
-    fallback_count = 0
-    for font_path in set(collect_font_paths(data)):
-        resolved = resolve_font_fallback(font_path)
-        if resolved and resolved != font_path:
-            fallback_count += 1
-    return fallback_count
-
-
-def _contains_letterboxd(data: Any) -> bool:
-    if isinstance(data, dict):
-        for key, value in data.items():
-            if 'letterboxd' in str(key).lower():
-                return True
-            if _contains_letterboxd(value):
-                return True
-    elif isinstance(data, list):
-        return any(_contains_letterboxd(item) for item in data)
-    elif isinstance(data, str):
-        return 'letterboxd' in data.lower()
-    return False
-
-
-def _strip_imdb_awards_category_filter(data: Any) -> int:
-    stripped = 0
-    if isinstance(data, dict):
-        for key, value in list(data.items()):
-            if str(key).lower() == 'imdb_awards' and isinstance(value, dict):
-                for filter_key in ('category_filter', 'category_filters'):
-                    if filter_key in value:
-                        value.pop(filter_key, None)
-                        stripped += 1
-            else:
-                stripped += _strip_imdb_awards_category_filter(value)
-    elif isinstance(data, list):
-        for item in data:
-            stripped += _strip_imdb_awards_category_filter(item)
-    return stripped
-
-
-def sanitize_overlay_data_for_fast_mode(data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, int]]:
-    """
-    Remove Letterboxd builders and skip IMDb awards category_filter validation in FAST mode.
-    """
-    removed_letterboxd = 0
-    stripped_imdb = 0
-
-    if not isinstance(data, dict):
-        return data, {'letterboxd_removed': 0, 'imdb_category_filters_stripped': 0}
-
-    for section_key in ('overlays', 'collections', 'metadata', 'templates'):
-        section = data.get(section_key)
-        if isinstance(section, dict):
-            for item_key in list(section.keys()):
-                item_value = section[item_key]
-                if _contains_letterboxd(item_value):
-                    section.pop(item_key, None)
-                    removed_letterboxd += 1
-                else:
-                    stripped_imdb += _strip_imdb_awards_category_filter(item_value)
-
-    return data, {
-        'letterboxd_removed': removed_letterboxd,
-        'imdb_category_filters_stripped': stripped_imdb,
-    }
-
-
-# ============================================================================
-# Output Caching Functions
-# ============================================================================
-
-def compute_config_hash(preview_config: Dict[str, Any]) -> str:
-    """
-    Compute a hash of the configuration that affects overlay output.
-
-    This includes:
-    - Preview targets (id, type, metadata)
-    - Overlay file references
-    - Library configurations
-
-    Does NOT include:
-    - Plex URL/token (doesn't affect output)
-    - TMDb credentials (doesn't affect output)
-
-    Returns:
-        A hex hash string that uniquely identifies this configuration.
-    """
-    hash_input = {}
-
-    # Include preview targets
-    preview_data = preview_config.get('preview', {})
-    targets = safe_preview_targets(preview_config)
-
-    # Sort targets by id for consistent hashing
-    sorted_targets = sorted(targets, key=lambda t: t.get('id', ''))
-    hash_input['targets'] = [
-        {
-            'id': t.get('id'),
-            'type': t.get('type'),
-            'ratingKey': t.get('ratingKey'),
-            'metadata': t.get('metadata'),
-        }
-        for t in sorted_targets
-    ]
-
-    # Include library overlay configurations
-    if 'libraries' in preview_config:
-        hash_input['libraries'] = {}
-        for lib_name, lib_config in preview_config['libraries'].items():
-            if isinstance(lib_config, dict):
-                hash_input['libraries'][lib_name] = {
-                    'overlay_files': lib_config.get('overlay_files'),
-                }
-
-    # Serialize and hash
-    hash_str = json.dumps(hash_input, sort_keys=True, default=str)
-    return hashlib.sha256(hash_str.encode()).hexdigest()[:16]
-
-
-def check_cached_outputs(job_path: Path, config_hash: str) -> bool:
-    """
-    Check if cached outputs exist and are valid for this config hash.
-
-    Returns True if:
-    1. Cache hash file exists and matches current config
-    2. All expected output files exist
-    """
-    output_dir = job_path / 'output'
-    cache_hash_path = output_dir / '.cache_hash'
-
-    # Check if hash file exists
-    if not cache_hash_path.exists():
-        return False
-
-    # Check if hash matches
-    try:
-        stored_hash = cache_hash_path.read_text().strip()
-        if stored_hash != config_hash:
-            logger.info(f"Config changed (hash {stored_hash[:8]}... -> {config_hash[:8]}...)")
-            return False
-    except Exception as e:
-        logger.warning(f"Failed to read cache hash: {e}")
-        return False
-
-    # Check if output files exist
-    output_files = list(output_dir.glob('*_after.*'))
-    if not output_files:
-        logger.info("No cached output files found")
-        return False
-
-    logger.info(f"Found {len(output_files)} cached output files")
-    return True
-
-
-def save_cache_hash(job_path: Path, config_hash: str):
-    """Save the config hash after successful rendering."""
-    output_dir = job_path / 'output'
-    cache_hash_path = output_dir / '.cache_hash'
-
-    try:
-        cache_hash_path.write_text(config_hash)
-        logger.info(f"Saved cache hash: {config_hash[:8]}...")
-    except Exception as e:
-        logger.warning(f"Failed to save cache hash: {e}")
-
-
-def use_cached_outputs(job_path: Path) -> Tuple[bool, Dict[str, str]]:
-    """
-    Use cached outputs without re-rendering.
-
-    Returns:
-        (success, exported_files dict)
-    """
-    output_dir = job_path / 'output'
-    exported = {}
-
-    # Find all output files
-    for output_file in output_dir.glob('*_after.*'):
-        # Extract target_id from filename (e.g., "matrix_after.png" -> "matrix")
-        target_id = output_file.stem.replace('_after', '')
-        exported[target_id] = str(output_file)
-
-    return len(exported) > 0, exported
-
-# Mock library mode - prevents forwarding listing endpoints to real Plex
-# Set PREVIEW_MOCK_LIBRARY=0 to disable and fall back to filter mode
-MOCK_LIBRARY_ENABLED = os.environ.get('PREVIEW_MOCK_LIBRARY', '1') == '1'
-DEBUG_MOCK_XML = os.environ.get('PREVIEW_DEBUG_MOCK_XML', '0') == '1'
-
-# Plex upload endpoint patterns
-# Matches: /library/metadata/<ratingKey>/posters, /library/metadata/<ratingKey>/arts, etc.
-PLEX_UPLOAD_PATTERN = re.compile(
-    r'^/library/metadata/(\d+)/(posters?|arts?|thumbs?)(?:\?.*)?$'
+from fonts import validate_fonts_at_startup, ensure_font_fallbacks
+from caching import (
+    compute_config_hash,
+    check_cached_outputs,
+    save_cache_hash,
+    use_cached_outputs,
 )
+from xml_builders import extract_allowed_rating_keys
+from proxy_plex import PlexProxy
+from proxy_tmdb import TMDbProxy
+from config import (
+    load_preview_config,
+    apply_fast_mode_sanitization,
+    apply_font_fallbacks_to_overlays,
+    fetch_proxy_sections,
+    validate_library_sections,
+    generate_proxy_config,
+    redact_yaml_snippet,
+)
+from kometa_runner import run_kometa
+from export import export_overlay_outputs, export_local_preview_artifacts
 
 # Additional upload patterns to capture more aggressively
 # Kometa may use various upload mechanisms
@@ -3598,6 +3245,8 @@ def main():
     final_exit = 1
     summary_written = False
     summary_path: Optional[Path] = None
+    summary: Optional[Dict[str, Any]] = None
+    config_hash: Optional[str] = None
 
     if not job_path.exists():
         logger.error(f"Job directory not found: {job_path}")
@@ -3752,8 +3401,6 @@ def main():
             logger.info("  TMDb proxy disabled - full external expansion enabled")
         logger.info("=" * 60)
 
-    summary: Optional[Dict[str, Any]] = None
-
     try:
         proxy.start()
         if tmdb_proxy:
@@ -3854,7 +3501,7 @@ def main():
                 for line in snippet_lines:
                     logger.error(f"  {line}")
             raise RuntimeError(
-                "Kometa did not process libraries — likely invalid config "
+                "Kometa did not process libraries - likely invalid config "
                 "(missing libraries) or YAML truncated (unexpected '...')."
             )
 
@@ -3927,7 +3574,7 @@ def main():
             if tmdb_stats.get('skipped_non_overlay', 0) > 0:
                 logger.info(f"TMDb non-overlay discover skipped: {tmdb_stats['skipped_non_overlay']}")
             if tmdb_stats.get('skipped_tvdb_conversions', 0) > 0:
-                logger.info(f"TMDb→TVDb conversions skipped: {tmdb_stats['skipped_tvdb_conversions']}")
+                logger.info(f"TMDb->TVDb conversions skipped: {tmdb_stats['skipped_tvdb_conversions']}")
 
         # H3/H4: Log diagnostic warnings
         if zero_match_searches > 0:
