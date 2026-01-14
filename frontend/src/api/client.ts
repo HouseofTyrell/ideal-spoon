@@ -13,9 +13,12 @@ export interface ConfigAnalysis {
   overlayYaml: string;
 }
 
+// Job status values - must match backend/src/constants.ts
+export type JobStatusValue = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
 export interface JobStatus {
   jobId: string;
-  status: 'queued' | 'resolving' | 'fetching' | 'rendering' | 'succeeded' | 'failed' | 'cancelled';
+  status: JobStatusValue;
   progress: number;
   createdAt: string;
   updatedAt: string;

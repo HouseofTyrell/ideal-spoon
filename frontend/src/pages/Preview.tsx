@@ -361,14 +361,15 @@ function PreviewPage({
 
 function getStatusBadgeType(status: string): string {
   switch (status) {
-    case 'succeeded':
+    case 'completed':
       return 'success'
     case 'failed':
     case 'cancelled':
       return 'error'
     case 'running':
-    case 'rendering':
       return 'info'
+    case 'pending':
+      return 'warning'
     default:
       return 'warning'
   }
