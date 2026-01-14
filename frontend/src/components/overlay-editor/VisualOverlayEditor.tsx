@@ -207,6 +207,109 @@ function VisualOverlayEditor({
     [overlays, notifyChange]
   )
 
+  // Move selected overlay up/down
+  const moveSelectedOverlay = useCallback(
+    (direction: 'up' | 'down') => {
+      if (!selectedId || overlays.length < 2) return
+
+      const currentIndex = overlays.findIndex((o) => o.id === selectedId)
+      if (currentIndex === -1) return
+
+      const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1
+      if (newIndex < 0 || newIndex >= overlays.length) return
+
+      const newOverlays = [...overlays]
+      const [moved] = newOverlays.splice(currentIndex, 1)
+      newOverlays.splice(newIndex, 0, moved)
+
+      setOverlays(newOverlays)
+      notifyChange(newOverlays)
+    },
+    [selectedId, overlays, notifyChange]
+  )
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input/textarea
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        return
+      }
+
+      // Ignore if disabled or in YAML view
+      if (disabled || viewMode === 'yaml') return
+
+      switch (e.key) {
+        case 'Delete':
+        case 'Backspace':
+          if (selectedId) {
+            e.preventDefault()
+            handleDeleteOverlay(selectedId)
+          }
+          break
+
+        case 'ArrowUp':
+          if (selectedId && !e.metaKey && !e.ctrlKey) {
+            e.preventDefault()
+            if (e.shiftKey) {
+              // Shift+Up = Move overlay up in list
+              moveSelectedOverlay('up')
+            } else {
+              // Up = Select previous overlay
+              const currentIndex = overlays.findIndex((o) => o.id === selectedId)
+              if (currentIndex > 0) {
+                setSelectedId(overlays[currentIndex - 1].id)
+              }
+            }
+          }
+          break
+
+        case 'ArrowDown':
+          if (selectedId && !e.metaKey && !e.ctrlKey) {
+            e.preventDefault()
+            if (e.shiftKey) {
+              // Shift+Down = Move overlay down in list
+              moveSelectedOverlay('down')
+            } else {
+              // Down = Select next overlay
+              const currentIndex = overlays.findIndex((o) => o.id === selectedId)
+              if (currentIndex < overlays.length - 1) {
+                setSelectedId(overlays[currentIndex + 1].id)
+              }
+            }
+          }
+          break
+
+        case 'Escape':
+          setSelectedId(null)
+          break
+
+        case 'e':
+        case 'E':
+          // Toggle enable/disable
+          if (selectedId && !e.metaKey && !e.ctrlKey) {
+            const overlay = overlays.find((o) => o.id === selectedId)
+            if (overlay) {
+              handleToggleOverlay(selectedId, !overlay.enabled)
+            }
+          }
+          break
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [
+    disabled,
+    viewMode,
+    selectedId,
+    overlays,
+    handleDeleteOverlay,
+    handleToggleOverlay,
+    moveSelectedOverlay,
+  ])
+
   return (
     <div className="visual-overlay-editor">
       {/* Draft Recovery Banner */}
