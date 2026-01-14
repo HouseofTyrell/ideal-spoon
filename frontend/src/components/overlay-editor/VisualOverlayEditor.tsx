@@ -71,6 +71,7 @@ function VisualOverlayEditor({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'visual' | 'yaml'>('visual')
   const [showQueuesPanel, setShowQueuesPanel] = useState(false)
+  const [clipboardOverlay, setClipboardOverlay] = useState<OverlayConfig | null>(null)
 
   // Check for saved draft on mount (only if no initial data)
   useEffect(() => {
@@ -256,6 +257,47 @@ function VisualOverlayEditor({
     [selectedId, overlays, notifyChange, updateState]
   )
 
+  // Copy overlay to clipboard
+  const handleCopyOverlay = useCallback(() => {
+    if (!selectedId) return
+    const overlay = overlays.find((o) => o.id === selectedId)
+    if (overlay) {
+      setClipboardOverlay({ ...overlay })
+    }
+  }, [selectedId, overlays])
+
+  // Paste overlay from clipboard
+  const handlePasteOverlay = useCallback(() => {
+    if (!clipboardOverlay) return
+    // Create a new overlay with a unique ID
+    const newOverlay: OverlayConfig = {
+      ...clipboardOverlay,
+      id: `${clipboardOverlay.id.split('-')[0]}-${Date.now()}`,
+      displayName: `${clipboardOverlay.displayName} (Copy)`,
+    }
+    const newOverlays = [...overlays, newOverlay]
+    updateState({ overlays: newOverlays })
+    setSelectedId(newOverlay.id)
+    notifyChange(newOverlays)
+  }, [clipboardOverlay, overlays, updateState, notifyChange])
+
+  // Duplicate selected overlay
+  const handleDuplicateOverlay = useCallback(() => {
+    if (!selectedId) return
+    const overlay = overlays.find((o) => o.id === selectedId)
+    if (overlay) {
+      const newOverlay: OverlayConfig = {
+        ...overlay,
+        id: `${overlay.id.split('-')[0]}-${Date.now()}`,
+        displayName: `${overlay.displayName} (Copy)`,
+      }
+      const newOverlays = [...overlays, newOverlay]
+      updateState({ overlays: newOverlays })
+      setSelectedId(newOverlay.id)
+      notifyChange(newOverlays)
+    }
+  }, [selectedId, overlays, updateState, notifyChange])
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -277,6 +319,27 @@ function VisualOverlayEditor({
       if ((e.ctrlKey || e.metaKey) && e.key === 'y' && !disabled) {
         e.preventDefault()
         redo()
+        return
+      }
+
+      // Copy overlay (Ctrl+C)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c' && selectedId && !disabled && !isTextInput) {
+        e.preventDefault()
+        handleCopyOverlay()
+        return
+      }
+
+      // Paste overlay (Ctrl+V)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v' && clipboardOverlay && !disabled && !isTextInput) {
+        e.preventDefault()
+        handlePasteOverlay()
+        return
+      }
+
+      // Duplicate overlay (Ctrl+D)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'd' && selectedId && !disabled && !isTextInput) {
+        e.preventDefault()
+        handleDuplicateOverlay()
         return
       }
 
@@ -351,9 +414,13 @@ function VisualOverlayEditor({
     viewMode,
     selectedId,
     overlays,
+    clipboardOverlay,
     handleDeleteOverlay,
     handleToggleOverlay,
     moveSelectedOverlay,
+    handleCopyOverlay,
+    handlePasteOverlay,
+    handleDuplicateOverlay,
     undo,
     redo,
   ])
