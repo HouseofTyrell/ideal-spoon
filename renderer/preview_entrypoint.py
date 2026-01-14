@@ -79,6 +79,70 @@ TMDB_PROXY_PORT = 8191  # Port for TMDb proxy
 
 
 # ============================================================================
+# Font Configuration (P1)
+# ============================================================================
+# PREVIEW_STRICT_FONTS: If true, fail if required fonts are missing
+# Default: false (log warnings but continue)
+PREVIEW_STRICT_FONTS = os.environ.get('PREVIEW_STRICT_FONTS', '0') == '1'
+
+# Default fallback font path
+DEFAULT_FALLBACK_FONT = os.environ.get('PREVIEW_FALLBACK_FONT', '/config/fonts/Inter-Regular.ttf')
+
+# Common font paths to validate
+COMMON_FONT_PATHS = [
+    '/config/fonts',
+    '/fonts',
+    '/usr/share/fonts',
+]
+
+
+def validate_fonts_at_startup() -> List[str]:
+    """
+    Validate font availability at startup.
+
+    P1 Fix: Check common font directories and log warnings for missing fonts.
+    Returns a list of available font directories.
+    """
+    available_dirs = []
+    missing_dirs = []
+
+    for font_path in COMMON_FONT_PATHS:
+        if Path(font_path).exists():
+            available_dirs.append(font_path)
+            # List available fonts
+            fonts = list(Path(font_path).glob('*.ttf')) + list(Path(font_path).glob('*.otf'))
+            if fonts:
+                logger.info(f"FONT_DIR_FOUND: {font_path} ({len(fonts)} fonts)")
+                for font in fonts[:5]:  # Log first 5
+                    logger.debug(f"  - {font.name}")
+                if len(fonts) > 5:
+                    logger.debug(f"  - ... and {len(fonts) - 5} more")
+            else:
+                logger.warning(f"FONT_DIR_EMPTY: {font_path} exists but contains no fonts")
+        else:
+            missing_dirs.append(font_path)
+
+    if not available_dirs:
+        logger.warning("FONT_WARNING: No font directories found!")
+        logger.warning(f"  Checked: {', '.join(COMMON_FONT_PATHS)}")
+        logger.warning("  Overlay rendering may fail if custom fonts are referenced.")
+        logger.warning("  To fix: Mount font files to /config/fonts or set PREVIEW_FALLBACK_FONT")
+
+    # Check fallback font
+    if Path(DEFAULT_FALLBACK_FONT).exists():
+        logger.info(f"FALLBACK_FONT_OK: {DEFAULT_FALLBACK_FONT}")
+    else:
+        logger.warning(f"FALLBACK_FONT_MISSING: {DEFAULT_FALLBACK_FONT}")
+        if PREVIEW_STRICT_FONTS:
+            raise FileNotFoundError(
+                f"Fallback font not found: {DEFAULT_FALLBACK_FONT}. "
+                f"Set PREVIEW_STRICT_FONTS=0 to continue without fallback font."
+            )
+
+    return available_dirs
+
+
+# ============================================================================
 # Output Caching Functions
 # ============================================================================
 
@@ -2863,6 +2927,14 @@ def main():
     logger.info("Path A: Real Kometa with Proxy Write Blocking + Upload Capture")
     logger.info("=" * 60)
     logger.info(f"Job path: {job_path}")
+    logger.info(f"Preview mode: {PREVIEW_ACCURACY}")
+
+    # P1: Validate font availability at startup
+    try:
+        available_font_dirs = validate_fonts_at_startup()
+    except FileNotFoundError as e:
+        logger.error(f"Font validation failed: {e}")
+        sys.exit(1)
 
     output_dir = job_path / 'output'
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -566,6 +566,99 @@ The proxy validates metadata responses before caching to prevent parse errors:
 | WARNING  | CACHE_METADATA_PARSE_ERROR ratingKey=12345: (detailed error)
 ```
 
+## Upload Capture (P0 Fix)
+
+The proxy captures all poster uploads from Kometa:
+
+### Captured Endpoints
+- `/library/metadata/<ratingKey>/poster(s)`
+- `/library/metadata/<ratingKey>/art(s)`
+- `/library/metadata/<ratingKey>/thumb(s)`
+- `/photo/:/transcode` with ratingKey in query
+- Any PUT/POST with image content-type
+
+### Capture Logic
+1. Parse ratingKey from URL path or query params
+2. Extract image from multipart or raw body
+3. Save to `output/by_ratingkey/<ratingKey>_<kind>_<timestamp>.<ext>`
+4. Return 200 OK to Kometa
+
+**Logs:**
+```
+| INFO     | CAPTURED_UPLOAD ratingKey=12345 kind=poster bytes=234567 path=/library/metadata/12345/poster
+| WARNING  | UPLOAD_IGNORED: PUT /photo/:/transcode reason=no_image_data
+```
+
+### Safety Check
+If no uploads are captured but targets exist, the log shows:
+```
+============================================================
+UPLOAD CAPTURE FAILURE - No images were captured!
+============================================================
+Targets: 5
+Total blocked requests: 15
+Last 20 PUT/POST requests:
+  PUT /library/metadata/12345/poster content_type=image/jpeg ...
+============================================================
+```
+
+## Library Type Fix (P0 Fix)
+
+The proxy ensures correct library types are returned to Kometa:
+
+### Problem Solved
+- "Unknown libtype 'movie' ... Available libtypes: ['collection']"
+- Caused by real Plex returning a different library at section ID
+
+### Solution
+The proxy intercepts `/library/sections/{id}` requests and returns synthetic
+section details with the correct type based on preview targets:
+
+```xml
+<MediaContainer>
+  <Directory key="1" type="movie" title="Movies" ... />
+</MediaContainer>
+```
+
+**Logs:**
+```
+| INFO     | MOCK_SECTION_DETAIL section_id=1 type=movie
+```
+
+## Font Configuration (P1)
+
+### Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `PREVIEW_STRICT_FONTS` | `0` | If `1`, fail if fonts missing |
+| `PREVIEW_FALLBACK_FONT` | `/config/fonts/Inter-Regular.ttf` | Default fallback font |
+
+### Validation
+
+At startup, the proxy validates font directories:
+- `/config/fonts`
+- `/fonts`
+- `/usr/share/fonts`
+
+**Logs:**
+```
+| INFO     | FONT_DIR_FOUND: /config/fonts (12 fonts)
+| INFO     | FALLBACK_FONT_OK: /config/fonts/Inter-Regular.ttf
+| WARNING  | FONT_DIR_EMPTY: /fonts exists but contains no fonts
+```
+
+### Mounting Fonts
+
+To add custom fonts to the container:
+```yaml
+volumes:
+  - ./fonts:/config/fonts:ro
+```
+
+Required fonts depend on your overlay configuration. The proxy logs warnings
+if common font directories are missing.
+
 ## No Fallback Rendering
 
 This implementation does **NOT** include PIL/manual rendering fallback.
