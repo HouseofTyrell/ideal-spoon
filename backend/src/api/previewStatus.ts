@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getJobManager } from '../jobs/jobManager.js';
+import { SSE_HEARTBEAT_INTERVAL_MS, SSE_CLOSE_DELAY_MS } from '../constants.js';
 
 const router = Router();
 
@@ -53,6 +54,21 @@ router.get('/status/:jobId', async (req: Request, res: Response) => {
 });
 
 /**
+ * Safely write to SSE response, checking if connection is still open
+ */
+function safeSSEWrite(res: Response, data: string): boolean {
+  if (res.writableEnded || res.destroyed) {
+    return false;
+  }
+  try {
+    res.write(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * GET /api/preview/events/:jobId
  * SSE stream of job events
  */
@@ -68,7 +84,7 @@ router.get('/events/:jobId', (req: Request, res: Response) => {
   res.flushHeaders();
 
   // Send initial connection event
-  res.write(`event: connected\ndata: ${JSON.stringify({ jobId })}\n\n`);
+  safeSSEWrite(res, `event: connected\ndata: ${JSON.stringify({ jobId })}\n\n`);
 
   // Listen for job events
   const eventHandler = (event: { type: string; timestamp: Date; message: string; data?: Record<string, unknown> }) => {
@@ -79,30 +95,30 @@ router.get('/events/:jobId', (req: Request, res: Response) => {
       ...event.data,
     };
 
-    res.write(`event: ${event.type}\ndata: ${JSON.stringify(eventData)}\n\n`);
+    safeSSEWrite(res, `event: ${event.type}\ndata: ${JSON.stringify(eventData)}\n\n`);
 
     // Close connection on complete or error
     if (event.type === 'complete' || event.type === 'error') {
       setTimeout(() => {
-        res.write('event: close\ndata: {}\n\n');
-        res.end();
-      }, 100);
+        if (safeSSEWrite(res, 'event: close\ndata: {}\n\n')) {
+          res.end();
+        }
+      }, SSE_CLOSE_DELAY_MS);
     }
   };
 
   jobManager.on(`job:${jobId}`, eventHandler);
 
-  // Handle client disconnect
+  // Send heartbeat to keep connection alive
+  const heartbeat = setInterval(() => {
+    if (!safeSSEWrite(res, ': heartbeat\n\n')) {
+      clearInterval(heartbeat);
+    }
+  }, SSE_HEARTBEAT_INTERVAL_MS);
+
+  // Handle client disconnect - single listener for cleanup
   req.on('close', () => {
     jobManager.off(`job:${jobId}`, eventHandler);
-  });
-
-  // Send heartbeat every 30 seconds
-  const heartbeat = setInterval(() => {
-    res.write(': heartbeat\n\n');
-  }, 30000);
-
-  req.on('close', () => {
     clearInterval(heartbeat);
   });
 });

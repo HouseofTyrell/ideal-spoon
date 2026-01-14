@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getJobManager } from '../jobs/jobManager.js';
-import { profiles } from './configUpload.js';
+import { getProfileStore } from '../storage/profileStore.js';
 import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions.js';
 import { getAvailableTargets } from '../plex/resolveTargets.js';
 
@@ -14,11 +14,26 @@ router.post('/start', async (req: Request, res: Response) => {
   try {
     const { profileId, configYaml: directConfigYaml, testOptions } = req.body;
 
+    // Validate input types
+    if (profileId !== undefined && typeof profileId !== 'string') {
+      res.status(400).json({ error: 'profileId must be a string' });
+      return;
+    }
+    if (directConfigYaml !== undefined && typeof directConfigYaml !== 'string') {
+      res.status(400).json({ error: 'configYaml must be a string' });
+      return;
+    }
+    if (testOptions !== undefined && typeof testOptions !== 'object') {
+      res.status(400).json({ error: 'testOptions must be an object' });
+      return;
+    }
+
     let configYaml: string;
 
     // Get config from profile or direct submission
     if (profileId) {
-      const profile = profiles.get(profileId);
+      const store = getProfileStore();
+      const profile = store.get(profileId);
       if (!profile) {
         res.status(404).json({ error: 'Profile not found' });
         return;

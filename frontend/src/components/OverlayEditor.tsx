@@ -6,15 +6,16 @@ interface OverlayEditorProps {
   overlayYaml: string
   onEdit: (fullConfig: string) => void
   fullConfig: string
+  initialOverlays?: OverlayConfig[]
 }
 
 type EditorMode = 'visual' | 'raw'
 
-function OverlayEditor({ overlayYaml, onEdit, fullConfig }: OverlayEditorProps) {
+function OverlayEditor({ overlayYaml, onEdit, fullConfig, initialOverlays = [] }: OverlayEditorProps) {
   const [mode, setMode] = useState<EditorMode>('visual')
   const [editedYaml, setEditedYaml] = useState(overlayYaml)
   const [isRawEditing, setIsRawEditing] = useState(false)
-  const [visualOverlays, setVisualOverlays] = useState<OverlayConfig[]>([])
+  const [visualOverlays, setVisualOverlays] = useState<OverlayConfig[]>(initialOverlays)
 
   const handleRawSave = useCallback(() => {
     // For now, pass the full config back unchanged
@@ -29,10 +30,9 @@ function OverlayEditor({ overlayYaml, onEdit, fullConfig }: OverlayEditorProps) 
   }, [overlayYaml])
 
   const handleVisualChange = useCallback(
-    (overlays: OverlayConfig[], _queues: QueueConfig[], yaml: string) => {
+    (overlays: OverlayConfig[], _queues: QueueConfig[], _yaml: string) => {
       setVisualOverlays(overlays)
-      // In a future version, we'd merge this into the full config
-      console.log('Visual editor produced YAML:', yaml)
+      // Note: Visual editor changes are not yet persisted to the full config
     },
     []
   )

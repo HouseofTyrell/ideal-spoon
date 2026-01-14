@@ -1,0 +1,72 @@
+.template-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.template-header {
+  text-align: center;
+}
+
+.template-title {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.template-description {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.template-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.template-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 1.25rem;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.template-card:hover {
+  border-color: var(--accent-primary);
+  background-color: rgba(229, 160, 13, 0.05);
+  transform: translateY(-2px);
+}
+
+.template-icon {
+  font-size: 1.5rem;
+}
+
+.template-name {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.template-desc {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.template-actions {
+  display: flex;
+  justify-content: center;
+  padding-top: 0.5rem;
+}

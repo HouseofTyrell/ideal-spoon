@@ -1,19 +1,110 @@
 import { Router, Request, Response } from 'express';
-import { parseYaml, analyzeConfig, KometaConfig, redactConfig } from '../util/yaml.js';
+import { parseYaml, analyzeConfig, KometaConfig } from '../util/yaml.js';
 import { generateProfileId } from '../util/hash.js';
-
-// In-memory profile storage for v0
-interface Profile {
-  id: string;
-  configYaml: string;
-  analysis: ReturnType<typeof analyzeConfig>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-const profiles = new Map<string, Profile>();
+import { getProfileStore, ProfileData } from '../storage/profileStore.js';
 
 const router = Router();
+
+/**
+ * Generate a minimal Kometa config from Plex credentials
+ */
+function generateMinimalConfig(plexUrl: string, plexToken: string): string {
+  return `# Kometa Preview Studio - Generated Config
+# Created: ${new Date().toISOString()}
+
+plex:
+  url: ${plexUrl}
+  token: ${plexToken}
+  timeout: 60
+
+settings:
+  cache: true
+  cache_expiration: 60
+
+# Add your libraries below
+# Example:
+# libraries:
+#   Movies:
+#     overlay_files:
+#       - pmm: resolution
+`;
+}
+
+/**
+ * POST /api/config/new
+ * Create a new config from Plex credentials (start from scratch)
+ */
+router.post('/new', async (req: Request, res: Response) => {
+  try {
+    const { plexUrl, plexToken } = req.body;
+
+    // Validate inputs
+    if (!plexUrl || typeof plexUrl !== 'string') {
+      res.status(400).json({ error: 'plexUrl is required and must be a string' });
+      return;
+    }
+    if (!plexToken || typeof plexToken !== 'string') {
+      res.status(400).json({ error: 'plexToken is required and must be a string' });
+      return;
+    }
+
+    // Validate URL format
+    try {
+      new URL(plexUrl);
+    } catch {
+      res.status(400).json({ error: 'Invalid URL format for plexUrl' });
+      return;
+    }
+
+    // Generate minimal config
+    const configYaml = generateMinimalConfig(plexUrl.trim(), plexToken.trim());
+
+    // Parse and analyze (should succeed since we generated valid YAML)
+    const parsed = parseYaml(configYaml);
+    if (!parsed.parsed) {
+      res.status(500).json({ error: 'Failed to generate valid config' });
+      return;
+    }
+
+    const config = parsed.parsed as KometaConfig;
+    const analysis = analyzeConfig(config);
+
+    // Create profile
+    const profileId = generateProfileId();
+    const profile: ProfileData = {
+      id: profileId,
+      configYaml,
+      analysis,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const store = getProfileStore();
+    await store.set(profileId, profile);
+
+    // Return both analysis and the generated config
+    res.json({
+      analysis: {
+        profileId,
+        plexUrl: analysis.plexUrl,
+        tokenPresent: analysis.tokenPresent,
+        assetDirectories: analysis.assetDirectories,
+        overlayFiles: analysis.overlayFiles,
+        libraryNames: analysis.libraryNames,
+        warnings: analysis.warnings,
+        overlayYaml: analysis.overlayYaml,
+      },
+      configYaml,
+    });
+
+  } catch (err) {
+    console.error('Config creation error:', err);
+    res.status(500).json({
+      error: 'Failed to create configuration',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
 
 /**
  * POST /api/config
@@ -27,6 +118,11 @@ router.post('/', async (req: Request, res: Response) => {
     if (req.file) {
       configYaml = req.file.buffer.toString('utf-8');
     } else if (req.body?.configYaml) {
+      // Validate configYaml is a string
+      if (typeof req.body.configYaml !== 'string') {
+        res.status(400).json({ error: 'configYaml must be a string' });
+        return;
+      }
       configYaml = req.body.configYaml;
     } else {
       res.status(400).json({
@@ -60,7 +156,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Create profile
     const profileId = generateProfileId();
-    const profile: Profile = {
+    const profile: ProfileData = {
       id: profileId,
       configYaml,
       analysis,
@@ -68,7 +164,8 @@ router.post('/', async (req: Request, res: Response) => {
       updatedAt: new Date().toISOString(),
     };
 
-    profiles.set(profileId, profile);
+    const store = getProfileStore();
+    await store.set(profileId, profile);
 
     // Return analysis (without sensitive data)
     res.json({
@@ -97,7 +194,8 @@ router.post('/', async (req: Request, res: Response) => {
  */
 router.get('/:profileId', (req: Request, res: Response) => {
   const { profileId } = req.params;
-  const profile = profiles.get(profileId);
+  const store = getProfileStore();
+  const profile = store.get(profileId);
 
   if (!profile) {
     res.status(404).json({ error: 'Profile not found' });
@@ -122,9 +220,10 @@ router.get('/:profileId', (req: Request, res: Response) => {
  * PUT /api/config/:profileId
  * Update a profile's config
  */
-router.put('/:profileId', (req: Request, res: Response) => {
+router.put('/:profileId', async (req: Request, res: Response) => {
   const { profileId } = req.params;
-  const profile = profiles.get(profileId);
+  const store = getProfileStore();
+  const profile = store.get(profileId);
 
   if (!profile) {
     res.status(404).json({ error: 'Profile not found' });
@@ -135,6 +234,11 @@ router.put('/:profileId', (req: Request, res: Response) => {
 
   if (!configYaml) {
     res.status(400).json({ error: 'configYaml is required' });
+    return;
+  }
+
+  if (typeof configYaml !== 'string') {
+    res.status(400).json({ error: 'configYaml must be a string' });
     return;
   }
 
@@ -153,12 +257,17 @@ router.put('/:profileId', (req: Request, res: Response) => {
   const analysis = analyzeConfig(config);
 
   // Update profile
-  profile.configYaml = configYaml;
-  profile.analysis = analysis;
-  profile.updatedAt = new Date().toISOString();
+  const updatedProfile: ProfileData = {
+    ...profile,
+    configYaml,
+    analysis,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await store.set(profileId, updatedProfile);
 
   res.json({
-    profileId: profile.id,
+    profileId: updatedProfile.id,
     plexUrl: analysis.plexUrl,
     tokenPresent: analysis.tokenPresent,
     assetDirectories: analysis.assetDirectories,
@@ -166,7 +275,7 @@ router.put('/:profileId', (req: Request, res: Response) => {
     libraryNames: analysis.libraryNames,
     warnings: analysis.warnings,
     overlayYaml: analysis.overlayYaml,
-    updatedAt: profile.updatedAt,
+    updatedAt: updatedProfile.updatedAt,
   });
 });
 
@@ -174,15 +283,16 @@ router.put('/:profileId', (req: Request, res: Response) => {
  * DELETE /api/config/:profileId
  * Delete a profile
  */
-router.delete('/:profileId', (req: Request, res: Response) => {
+router.delete('/:profileId', async (req: Request, res: Response) => {
   const { profileId } = req.params;
+  const store = getProfileStore();
 
-  if (!profiles.has(profileId)) {
+  if (!store.has(profileId)) {
     res.status(404).json({ error: 'Profile not found' });
     return;
   }
 
-  profiles.delete(profileId);
+  await store.delete(profileId);
   res.json({ success: true });
 });
 
@@ -192,7 +302,8 @@ router.delete('/:profileId', (req: Request, res: Response) => {
  */
 router.get('/:profileId/raw', (req: Request, res: Response) => {
   const { profileId } = req.params;
-  const profile = profiles.get(profileId);
+  const store = getProfileStore();
+  const profile = store.get(profileId);
 
   if (!profile) {
     res.status(404).json({ error: 'Profile not found' });
@@ -205,6 +316,4 @@ router.get('/:profileId/raw', (req: Request, res: Response) => {
   });
 });
 
-// Export the profiles map for use by other modules
-export { profiles };
 export default router;

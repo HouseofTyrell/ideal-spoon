@@ -69,6 +69,69 @@ export interface SystemActionResult {
 }
 
 /**
+ * Create a new config from Plex credentials (start from scratch)
+ */
+export async function createFromCredentials(
+  plexUrl: string,
+  plexToken: string
+): Promise<{ analysis: ConfigAnalysis; configYaml: string }> {
+  const response = await fetch(`${API_BASE}/config/new`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ plexUrl, plexToken }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.details || error.error || 'Failed to create config');
+  }
+
+  return response.json();
+}
+
+export interface PlexLibrary {
+  key: string;
+  title: string;
+  type: string;
+}
+
+export interface PlexTestResult {
+  success: boolean;
+  libraries?: PlexLibrary[];
+  message?: string;
+  error?: string;
+}
+
+/**
+ * Test Plex connection and get libraries
+ */
+export async function testPlexConnection(
+  plexUrl: string,
+  plexToken: string
+): Promise<PlexTestResult> {
+  const response = await fetch(`${API_BASE}/plex/test`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ plexUrl, plexToken }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    return {
+      success: false,
+      error: data.error || 'Connection failed',
+    };
+  }
+
+  return data;
+}
+
+/**
  * Upload or submit a Kometa config
  */
 export async function uploadConfig(configYaml: string): Promise<ConfigAnalysis> {

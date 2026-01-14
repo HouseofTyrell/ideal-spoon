@@ -96,8 +96,10 @@ class JobManager extends EventEmitter {
     const config = parseResult.parsed as KometaConfig;
     const analysis = analyzeConfig(config);
 
-    // Check for Plex connection
-    if (!analysis.plexUrl || !analysis.tokenPresent) {
+    // Check for Plex connection - validate and extract for type safety
+    const plexUrl = analysis.plexUrl;
+    const plexToken = config.plex?.token;
+    if (!plexUrl || !plexToken) {
       throw new Error('Plex URL and token are required in config');
     }
 
@@ -134,7 +136,9 @@ class JobManager extends EventEmitter {
     // Start job processing in background
     this.processJob(jobId, config, analysis, options).catch((err) => {
       console.error(`Job ${jobId} failed:`, err);
-      this.updateJobStatus(jobId, 'failed', 0, err.message);
+      this.updateJobStatus(jobId, 'failed', 0, err.message).catch((updateErr) => {
+        console.error(`Failed to update job ${jobId} status:`, updateErr);
+      });
     });
 
     return jobId;
@@ -165,14 +169,21 @@ class JobManager extends EventEmitter {
         data: { progress: 5 },
       });
 
+      // Validate required Plex configuration
+      const plexUrl = analysis.plexUrl;
+      const plexToken = config.plex?.token;
+      if (!plexUrl || !plexToken) {
+        throw new Error('Plex URL and token are required in config');
+      }
+
       // Create Plex client
       // CRITICAL: Kometa/Plex configs specify timeout in SECONDS, but PlexClient uses MILLISECONDS.
       // Without this conversion, a config with "timeout: 60" would be interpreted as 60ms instead
       // of 60 seconds, causing immediate timeouts when searching for movies in Plex.
       // This bug caused all Plex searches to fail with "Plex request timeout" errors.
       const plexClient = new PlexClient({
-        url: analysis.plexUrl!,
-        token: config.plex!.token!,
+        url: plexUrl,
+        token: plexToken,
         timeout: config.plex?.timeout ? config.plex.timeout * 1000 : undefined,
       });
 

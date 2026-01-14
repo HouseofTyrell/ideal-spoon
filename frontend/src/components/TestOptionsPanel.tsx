@@ -5,15 +5,7 @@ import {
   hasActiveFilters,
   getFilterSummary,
 } from '../types/testOptions'
-
-// Static preview targets (mirrors backend PREVIEW_TARGETS)
-const PREVIEW_TARGETS = [
-  { id: 'matrix', label: 'The Matrix (1999)', type: 'movie' },
-  { id: 'dune', label: 'Dune (2021)', type: 'movie' },
-  { id: 'breakingbad_series', label: 'Breaking Bad', type: 'show' },
-  { id: 'breakingbad_s01', label: 'Breaking Bad S01', type: 'season' },
-  { id: 'breakingbad_s01e01', label: 'Breaking Bad S01E01', type: 'episode' },
-]
+import { PREVIEW_TARGETS, filterTargetsByMediaType } from '../constants/previewTargets'
 
 interface TestOptionsPanelProps {
   options: TestOptions
@@ -96,23 +88,8 @@ function TestOptionsPanel({
 
   // Determine which targets are effectively selected
   const getEffectivelySelectedTargets = () => {
-    let targets = PREVIEW_TARGETS
-
     // Filter by media types
-    targets = targets.filter((t) => {
-      switch (t.type) {
-        case 'movie':
-          return options.mediaTypes.movies
-        case 'show':
-          return options.mediaTypes.shows
-        case 'season':
-          return options.mediaTypes.seasons
-        case 'episode':
-          return options.mediaTypes.episodes
-        default:
-          return true
-      }
-    })
+    let targets = filterTargetsByMediaType(PREVIEW_TARGETS, options.mediaTypes)
 
     // Filter by selected targets
     if (options.selectedTargets.length > 0) {
@@ -227,7 +204,7 @@ function TestOptionsPanel({
                     />
                     <span className="target-label">
                       {target.label}
-                      <span className="target-type">{target.type}</span>
+                      <span className="target-type">{target.displayType}</span>
                     </span>
                   </label>
                 )
