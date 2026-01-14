@@ -448,6 +448,124 @@ To verify no writes occurred:
 | ERROR    | MISSING_RATINGKEY target=unknown_item
 ```
 
+## Preview Accuracy Modes
+
+The preview system supports two accuracy modes to balance speed vs. completeness:
+
+### Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `PREVIEW_ACCURACY` | `fast` | Mode: `fast` or `accurate` |
+| `PREVIEW_EXTERNAL_ID_LIMIT` | `25` | Max IDs per external builder (fast mode) |
+| `PREVIEW_EXTERNAL_PAGES_LIMIT` | `1` | Max pages per external API (fast mode) |
+| `PREVIEW_TMDB_PROXY` | `1` | Enable TMDb proxy (fast mode only) |
+
+### Fast Mode (Default)
+
+Fast mode optimizes for speed by limiting external API expansions:
+
+1. **TMDb API Capping**: A local proxy intercepts TMDb API calls and:
+   - Caps `discover`, `trending`, `popular`, `top_rated` results to `PREVIEW_EXTERNAL_ID_LIMIT`
+   - Forces `total_pages=1` to prevent pagination
+   - Preserves JSON schema for Kometa compatibility
+
+2. **Bounded Expansion**: External builders (TMDb, Trakt) are limited to avoid
+   unbounded ID expansion that can slow preview generation.
+
+3. **Deduplication**: Identical TMDb requests within a preview run are cached
+   and deduplicated to avoid repeated expensive API calls.
+
+**Logs:**
+```
+| INFO     | PREVIEW_MODE: fast
+| INFO     | TMDB_PROXY started on port 8191
+| INFO     | TMDB_CAP: discover/movie capped from 1500 to 25 results
+| INFO     | TMDB_CACHE_HIT: discover/movie (fingerprint=abc123)
+| INFO     | FAST_PREVIEW: skipped TMDb discover for non-overlay context
+```
+
+### Accurate Mode
+
+Accurate mode provides full Kometa behavior without capping:
+
+1. **Full Expansion**: All external API results are used without limits
+2. **No TMDb Proxy**: Requests go directly to TMDb API
+3. **Complete Results**: Useful for testing overlays that depend on full metadata
+
+**When to use Accurate Mode:**
+- Testing overlays that use ranking/position data
+- Verifying behavior matches production Kometa
+- Debugging issues not reproducible in fast mode
+
+```bash
+PREVIEW_ACCURACY=accurate python preview_entrypoint.py
+```
+
+### Fast Mode Guarantees (G3)
+
+Fast mode guarantees bounded runtime:
+- No unbounded external ID expansion
+- Max `PREVIEW_EXTERNAL_ID_LIMIT` IDs per external builder
+- No repeated expansion of the same builder request (deduplication)
+- Total preview time independent of library size
+
+#### G1: Request Deduplication
+
+Within a single preview run, identical TMDb requests are cached and deduplicated:
+
+- **Fingerprint computation**: Based on endpoint path and sorted query params
+- **Cache storage**: In-memory for the duration of the preview run
+- **Subsequent requests**: Return cached response without network call
+
+```
+| INFO     | TMDB_CACHE_HIT: /3/discover/movie (fingerprint=abc123def456)
+```
+
+#### G2: Non-Overlay Discover Suppression
+
+In FAST mode, TMDb discover requests for non-overlay contexts are suppressed:
+
+**Suppressed requests** (return empty results):
+- Genre collections (`with_genres=28`)
+- Keyword collections (`with_keywords=9715`)
+- Certification collections (`certification=PG-13`)
+- Company/network filters (`with_companies`, `with_networks`)
+- People/cast/crew filters (`with_people`, `with_cast`, `with_crew`)
+- High vote thresholds (`vote_count.gte >= 100`)
+
+**Allowed requests** (capped but not suppressed):
+- Simple discover for overlay evaluation
+- Requests without collection-building indicators
+
+```
+| INFO     | FAST_PREVIEW: skipped TMDb discover for non-overlay context: /3/discover/movie
+```
+
+This ensures collections, charts, and defaults builders don't slow down preview mode.
+
+## Cache Metadata Validation
+
+The proxy validates metadata responses before caching to prevent parse errors:
+
+1. **Non-empty check**: Response must have content
+2. **XML format check**: Response must start with `<`
+3. **MediaContainer check**: Must contain MediaContainer element
+4. **Parse validation**: Must be valid XML
+
+**Compression Handling:**
+- Requests sent with `Accept-Encoding: identity` to prefer uncompressed
+- Gzip/deflate responses are decompressed before parsing
+- `Content-Encoding` header removed after decompression
+
+**Logs:**
+```
+| WARNING  | CACHE_METADATA_SKIP ratingKey=12345: empty response
+| WARNING  | CACHE_METADATA_SKIP ratingKey=12345: not XML (starts with: '\x1f\x8b...')
+| WARNING  | CACHE_METADATA_SKIP ratingKey=12345: no MediaContainer
+| WARNING  | CACHE_METADATA_PARSE_ERROR ratingKey=12345: (detailed error)
+```
+
 ## No Fallback Rendering
 
 This implementation does **NOT** include PIL/manual rendering fallback.
