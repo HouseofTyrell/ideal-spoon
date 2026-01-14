@@ -10,8 +10,8 @@ USER root
 # Create preview directories
 RUN mkdir -p /preview /jobs
 
-# Copy preview entrypoint script
-COPY preview_entrypoint.py /preview/preview_entrypoint.py
+# Copy all preview/renderer Python modules
+COPY *.py /preview/
 RUN chmod +x /preview/preview_entrypoint.py
 
 # Set working directory
