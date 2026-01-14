@@ -16,8 +16,8 @@ import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-# Import the filtering functions from preview_entrypoint
-from preview_entrypoint import (
+# Import from refactored modules
+from xml_builders import (
     filter_media_container_xml,
     create_empty_media_container_xml,
     is_listing_endpoint,
@@ -25,7 +25,6 @@ from preview_entrypoint import (
     is_metadata_endpoint,
     extract_allowed_rating_keys,
     extract_preview_targets,
-    safe_preview_targets,
     # Mock library mode functions
     build_synthetic_library_sections_xml,
     build_synthetic_section_detail_xml,
@@ -38,9 +37,10 @@ from preview_entrypoint import (
     extract_section_id,
     extract_search_query,
     extract_image_from_body,
-    TMDbProxyHandler,
-    generate_proxy_config,
 )
+from caching import safe_preview_targets
+from proxy_tmdb import TMDbProxyHandler
+from config import generate_proxy_config
 from sanitization import sanitize_overlay_data_for_fast_mode
 
 
