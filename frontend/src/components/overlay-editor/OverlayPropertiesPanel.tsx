@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import PositionPicker from './PositionPicker'
-import { OverlayConfig, OverlayPosition, OverlayBackdrop } from '../../types/overlayConfig'
+import TextOverlayEditor from './TextOverlayEditor'
+import { OverlayConfig, OverlayPosition, OverlayBackdrop, OverlayText } from '../../types/overlayConfig'
 
 interface OverlayPropertiesPanelProps {
   overlay: OverlayConfig | null
@@ -42,6 +43,19 @@ function OverlayPropertiesPanel({
       onChange({
         ...overlay,
         grouping: { ...overlay.grouping, [field]: value },
+      })
+    },
+    [overlay, onChange]
+  )
+
+  const handleTextChange = useCallback(
+    (text: OverlayText) => {
+      if (!overlay) return
+      onChange({
+        ...overlay,
+        text,
+        displayName: text.content || 'Text Overlay',
+        name: `text_${text.content.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 20)}`,
       })
     },
     [overlay, onChange]
@@ -120,6 +134,17 @@ function OverlayPropertiesPanel({
       </div>
 
       <div className="panel-content">
+        {/* Text Overlay Settings (only for text overlays) */}
+        {overlay.sourceType === 'text' && overlay.text && (
+          <section className="properties-section">
+            <TextOverlayEditor
+              text={overlay.text}
+              onChange={handleTextChange}
+              disabled={disabled}
+            />
+          </section>
+        )}
+
         {/* Position Section */}
         <section className="properties-section">
           <PositionPicker

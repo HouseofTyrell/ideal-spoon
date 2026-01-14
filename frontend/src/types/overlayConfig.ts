@@ -49,10 +49,62 @@ export interface OverlayText {
   font: string;            // Font name or path
   fontSize: number;
   fontColor: string;       // Hex color
-  fontStyle?: string;      // bold, italic, etc.
+  fontStyle?: 'bold' | 'italic' | 'bold italic';
   strokeColor?: string;
   strokeWidth?: number;
 }
+
+// Available fonts (commonly available system fonts + PMM fonts)
+export const AVAILABLE_FONTS = [
+  { id: 'inter', name: 'Inter', value: 'Inter' },
+  { id: 'roboto', name: 'Roboto', value: 'Roboto' },
+  { id: 'arial', name: 'Arial', value: 'Arial' },
+  { id: 'helvetica', name: 'Helvetica', value: 'Helvetica' },
+  { id: 'georgia', name: 'Georgia', value: 'Georgia' },
+  { id: 'times', name: 'Times New Roman', value: 'Times New Roman' },
+  { id: 'courier', name: 'Courier New', value: 'Courier New' },
+  { id: 'verdana', name: 'Verdana', value: 'Verdana' },
+  { id: 'tahoma', name: 'Tahoma', value: 'Tahoma' },
+  { id: 'trebuchet', name: 'Trebuchet MS', value: 'Trebuchet MS' },
+] as const;
+
+// Kometa text variables that can be used in overlays
+export interface TextVariable {
+  id: string;
+  name: string;
+  variable: string;
+  description: string;
+  category: string;
+  modifiers?: string[];
+}
+
+export const TEXT_VARIABLES: TextVariable[] = [
+  // Ratings
+  { id: 'imdb_rating', name: 'IMDb Rating', variable: '<<imdb_rating>>', description: 'IMDb rating (e.g., 8.5)', category: 'Ratings', modifiers: ['%', '#', 'W'] },
+  { id: 'tmdb_rating', name: 'TMDb Rating', variable: '<<tmdb_rating>>', description: 'TMDb rating', category: 'Ratings', modifiers: ['%', '#', 'W'] },
+  { id: 'rt_rating', name: 'Rotten Tomatoes', variable: '<<rt_rating>>', description: 'Rotten Tomatoes score', category: 'Ratings', modifiers: ['%', '#', 'W'] },
+  { id: 'audience_rating', name: 'Audience Rating', variable: '<<audience_rating>>', description: 'Audience rating', category: 'Ratings' },
+  { id: 'critic_rating', name: 'Critic Rating', variable: '<<critic_rating>>', description: 'Critic rating', category: 'Ratings' },
+
+  // Media Info
+  { id: 'runtime', name: 'Runtime', variable: '<<runtime>>', description: 'Duration in minutes', category: 'Media Info', modifiers: ['H', 'M'] },
+  { id: 'bitrate', name: 'Bitrate', variable: '<<bitrate>>', description: 'Video bitrate', category: 'Media Info' },
+  { id: 'resolution', name: 'Resolution', variable: '<<resolution>>', description: 'Video resolution (e.g., 1080p)', category: 'Media Info' },
+  { id: 'audio_codec', name: 'Audio Codec', variable: '<<audio_codec>>', description: 'Audio codec name', category: 'Media Info' },
+  { id: 'video_codec', name: 'Video Codec', variable: '<<video_codec>>', description: 'Video codec name', category: 'Media Info' },
+  { id: 'audio_channels', name: 'Audio Channels', variable: '<<audio_channels>>', description: 'Number of audio channels', category: 'Media Info' },
+
+  // Metadata
+  { id: 'title', name: 'Title', variable: '<<title>>', description: 'Item title', category: 'Metadata' },
+  { id: 'year', name: 'Year', variable: '<<year>>', description: 'Release year', category: 'Metadata' },
+  { id: 'content_rating', name: 'Content Rating', variable: '<<content_rating>>', description: 'Content rating (PG, R, etc.)', category: 'Metadata' },
+  { id: 'originally_available', name: 'Release Date', variable: '<<originally_available>>', description: 'Original release date', category: 'Metadata' },
+
+  // Library Info
+  { id: 'episode_count', name: 'Episode Count', variable: '<<episode_count>>', description: 'Number of episodes', category: 'Library' },
+  { id: 'season_count', name: 'Season Count', variable: '<<season_count>>', description: 'Number of seasons', category: 'Library' },
+  { id: 'versions', name: 'Versions', variable: '<<versions>>', description: 'Number of versions', category: 'Library' },
+];
 
 // Grouping and queue configuration
 export interface OverlayGrouping {

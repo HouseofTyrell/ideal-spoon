@@ -37,6 +37,7 @@ interface OverlayAttributes {
   font?: string
   font_size?: number
   font_color?: string
+  font_style?: string
   stroke_color?: string
   stroke_width?: number
 }
@@ -112,6 +113,9 @@ function generateOverlayAttributes(config: OverlayConfig): OverlayAttributes {
     }
     if (config.text.fontColor) {
       attrs.font_color = `"${config.text.fontColor}"`
+    }
+    if (config.text.fontStyle) {
+      attrs.font_style = config.text.fontStyle
     }
     if (config.text.strokeColor) {
       attrs.stroke_color = `"${config.text.strokeColor}"`

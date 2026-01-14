@@ -6,6 +6,7 @@ import {
   OverlayConfig,
   BuiltinOverlay,
   createOverlayConfig,
+  createTextOverlayConfig,
 } from '../../types/overlayConfig'
 import { generateOverlayYaml } from '../../utils/overlayYamlGenerator'
 
@@ -61,6 +62,15 @@ function VisualOverlayEditor({
     },
     [overlays, notifyChange]
   )
+
+  // Add a new text overlay
+  const handleAddTextOverlay = useCallback(() => {
+    const newOverlay = createTextOverlayConfig('New Text')
+    const newOverlays = [...overlays, newOverlay]
+    setOverlays(newOverlays)
+    setSelectedId(newOverlay.id)
+    notifyChange(newOverlays)
+  }, [overlays, notifyChange])
 
   // Update an overlay
   const handleUpdateOverlay = useCallback(
@@ -138,6 +148,17 @@ function VisualOverlayEditor({
               addedOverlayIds={addedOverlayIds}
               disabled={disabled}
             />
+            <div className="create-text-section">
+              <button
+                type="button"
+                className="create-text-btn"
+                onClick={handleAddTextOverlay}
+                disabled={disabled}
+              >
+                <span className="btn-icon">T</span>
+                <span>Create Text Overlay</span>
+              </button>
+            </div>
           </div>
 
           {/* Center: Active List + Preview Area */}
@@ -279,14 +300,62 @@ function VisualOverlayEditor({
         }
 
         .editor-library {
+          display: flex;
+          flex-direction: column;
           border-right: 1px solid var(--border-color);
           overflow: hidden;
         }
 
-        .editor-library > * {
-          height: 100%;
+        .editor-library > *:first-child {
+          flex: 1;
           border: none;
           border-radius: 0;
+          overflow: auto;
+        }
+
+        .create-text-section {
+          padding: 0.75rem;
+          border-top: 1px solid var(--border-color);
+          background-color: var(--bg-secondary);
+        }
+
+        .create-text-btn {
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          padding: 0.625rem 1rem;
+          background-color: var(--bg-primary);
+          border: 1px dashed var(--border-color);
+          border-radius: var(--radius-sm);
+          cursor: pointer;
+          font-size: 0.875rem;
+          font-weight: 500;
+          color: var(--text-secondary);
+          transition: all 0.15s;
+        }
+
+        .create-text-btn:hover:not(:disabled) {
+          border-color: var(--primary);
+          color: var(--primary);
+          background-color: var(--primary-light, rgba(99, 102, 241, 0.1));
+        }
+
+        .create-text-btn:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .btn-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 24px;
+          height: 24px;
+          background-color: var(--bg-tertiary);
+          border-radius: var(--radius-sm);
+          font-weight: bold;
         }
 
         .editor-main {
