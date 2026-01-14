@@ -1,8 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import BeforeAfter from './BeforeAfter'
 import ComparisonView from './ComparisonView'
+import ZoomableImage from './ZoomableImage'
+import ZoomControls from './ZoomControls'
 
 type ViewMode = 'before' | 'after' | 'compare'
+
+const MIN_ZOOM = 0.5
+const MAX_ZOOM = 4
+const ZOOM_STEP = 0.25
 
 interface PreviewTileProps {
   targetId: string
@@ -36,6 +42,7 @@ function PreviewTile({
 }: PreviewTileProps) {
   // Default to "Before" if afterUrl is not available, otherwise show "After"
   const [viewMode, setViewMode] = useState<ViewMode>(afterUrl ? 'after' : 'before')
+  const [zoom, setZoom] = useState(1)
 
   // Auto-switch to "After" when afterUrl becomes available (unless already comparing)
   useEffect(() => {
@@ -43,6 +50,23 @@ function PreviewTile({
       setViewMode('after')
     }
   }, [afterUrl, viewMode])
+
+  // Reset zoom when switching views or when images change
+  useEffect(() => {
+    setZoom(1)
+  }, [viewMode, beforeUrl, afterUrl])
+
+  const handleZoomIn = useCallback(() => {
+    setZoom((z) => Math.min(MAX_ZOOM, z + ZOOM_STEP))
+  }, [])
+
+  const handleZoomOut = useCallback(() => {
+    setZoom((z) => Math.max(MIN_ZOOM, z - ZOOM_STEP))
+  }, [])
+
+  const handleZoomReset = useCallback(() => {
+    setZoom(1)
+  }, [])
 
   const hasImages = beforeUrl || afterUrl
 
@@ -87,44 +111,69 @@ function PreviewTile({
         )}
 
         {hasImages && viewMode === 'compare' && (
-          <ComparisonView
-            beforeUrl={beforeUrl}
-            afterUrl={afterUrl}
-          />
+          <ZoomableImage
+            zoom={zoom}
+            onZoomChange={setZoom}
+            minZoom={MIN_ZOOM}
+            maxZoom={MAX_ZOOM}
+          >
+            <ComparisonView
+              beforeUrl={beforeUrl}
+              afterUrl={afterUrl}
+            />
+          </ZoomableImage>
         )}
 
         {hasImages && viewMode !== 'compare' && (
-          <BeforeAfter
-            beforeUrl={beforeUrl}
-            afterUrl={afterUrl}
-            showAfter={viewMode === 'after'}
-          />
+          <ZoomableImage
+            zoom={zoom}
+            onZoomChange={setZoom}
+            minZoom={MIN_ZOOM}
+            maxZoom={MAX_ZOOM}
+          >
+            <BeforeAfter
+              beforeUrl={beforeUrl}
+              afterUrl={afterUrl}
+              showAfter={viewMode === 'after'}
+            />
+          </ZoomableImage>
         )}
       </div>
 
       {hasImages && (
         <div className="tile-controls">
-          <div className="toggle-group">
-            <button
-              className={`toggle-btn ${viewMode === 'before' ? 'active' : ''}`}
-              onClick={() => setViewMode('before')}
-            >
-              Before
-            </button>
-            <button
-              className={`toggle-btn ${viewMode === 'after' ? 'active' : ''}`}
-              onClick={() => setViewMode('after')}
-            >
-              After
-            </button>
-            <button
-              className={`toggle-btn ${viewMode === 'compare' ? 'active' : ''}`}
-              onClick={() => setViewMode('compare')}
-              disabled={!beforeUrl}
-              title={!beforeUrl ? 'Need before image to compare' : 'Side-by-side comparison'}
-            >
-              Compare
-            </button>
+          <div className="controls-left">
+            <div className="toggle-group">
+              <button
+                className={`toggle-btn ${viewMode === 'before' ? 'active' : ''}`}
+                onClick={() => setViewMode('before')}
+              >
+                Before
+              </button>
+              <button
+                className={`toggle-btn ${viewMode === 'after' ? 'active' : ''}`}
+                onClick={() => setViewMode('after')}
+              >
+                After
+              </button>
+              <button
+                className={`toggle-btn ${viewMode === 'compare' ? 'active' : ''}`}
+                onClick={() => setViewMode('compare')}
+                disabled={!beforeUrl}
+                title={!beforeUrl ? 'Need before image to compare' : 'Side-by-side comparison'}
+              >
+                Compare
+              </button>
+            </div>
+
+            <ZoomControls
+              zoom={zoom}
+              onZoomIn={handleZoomIn}
+              onZoomOut={handleZoomOut}
+              onZoomReset={handleZoomReset}
+              minZoom={MIN_ZOOM}
+              maxZoom={MAX_ZOOM}
+            />
           </div>
 
           {afterUrl && (
@@ -212,6 +261,14 @@ function PreviewTile({
           justify-content: space-between;
           align-items: center;
           gap: 0.5rem;
+          flex-wrap: wrap;
+        }
+
+        .controls-left {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+          flex-wrap: wrap;
         }
 
         .toggle-group {
