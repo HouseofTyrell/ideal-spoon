@@ -15,7 +15,14 @@ import {
 } from '../../types/overlayConfig'
 import { generateOverlayYaml } from '../../utils/overlayYamlGenerator'
 import { useAutoSave, DraftData } from '../../hooks/useAutoSave'
+import { useUndoRedo } from '../../hooks/useUndoRedo'
 import './VisualOverlayEditor.css'
+
+// Combined state for undo/redo
+interface EditorState {
+  overlays: OverlayConfig[]
+  queues: QueueConfig[]
+}
 
 interface VisualOverlayEditorProps {
   initialOverlays?: OverlayConfig[]
@@ -37,8 +44,30 @@ function VisualOverlayEditor({
   const [draftAge, setDraftAge] = useState<string | null>(null)
   const [savedDraft, setSavedDraft] = useState<DraftData | null>(null)
 
-  const [overlays, setOverlays] = useState<OverlayConfig[]>(initialOverlays)
-  const [queues, setQueues] = useState<QueueConfig[]>(initialQueues)
+  // Use undo/redo for combined overlay and queue state
+  const {
+    state: editorState,
+    setState: setEditorState,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+  } = useUndoRedo<EditorState>({
+    overlays: initialOverlays,
+    queues: initialQueues,
+  })
+
+  // Destructure for convenience
+  const { overlays, queues } = editorState
+
+  // Helper to update state
+  const updateState = useCallback(
+    (updates: Partial<EditorState>) => {
+      setEditorState((prev) => ({ ...prev, ...updates }))
+    },
+    [setEditorState]
+  )
+
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'visual' | 'yaml'>('visual')
   const [showQueuesPanel, setShowQueuesPanel] = useState(false)
@@ -67,15 +96,14 @@ function VisualOverlayEditor({
     if (savedDraft) {
       const restoredOverlays = savedDraft.overlays as OverlayConfig[]
       const restoredQueues = savedDraft.queues as QueueConfig[]
-      setOverlays(restoredOverlays)
-      setQueues(restoredQueues)
+      updateState({ overlays: restoredOverlays, queues: restoredQueues })
       setShowDraftBanner(false)
       if (onConfigChange) {
         const yaml = generateOverlayYaml(restoredOverlays, restoredQueues)
         onConfigChange(restoredOverlays, restoredQueues, yaml)
       }
     }
-  }, [savedDraft, onConfigChange])
+  }, [savedDraft, onConfigChange, updateState])
 
   // Dismiss draft banner
   const handleDismissDraft = useCallback(() => {
@@ -117,82 +145,82 @@ function VisualOverlayEditor({
     (builtin: BuiltinOverlay) => {
       const newOverlay = createOverlayConfig(builtin)
       const newOverlays = [...overlays, newOverlay]
-      setOverlays(newOverlays)
+      updateState({ overlays: newOverlays })
       setSelectedId(newOverlay.id)
       notifyChange(newOverlays)
     },
-    [overlays, notifyChange]
+    [overlays, notifyChange, updateState]
   )
 
   // Add a new text overlay
   const handleAddTextOverlay = useCallback(() => {
     const newOverlay = createTextOverlayConfig('New Text')
     const newOverlays = [...overlays, newOverlay]
-    setOverlays(newOverlays)
+    updateState({ overlays: newOverlays })
     setSelectedId(newOverlay.id)
     notifyChange(newOverlays)
-  }, [overlays, notifyChange])
+  }, [overlays, notifyChange, updateState])
 
   // Add a custom overlay (from file or URL)
   const handleAddCustomOverlay = useCallback(
     (overlay: OverlayConfig) => {
       const newOverlays = [...overlays, overlay]
-      setOverlays(newOverlays)
+      updateState({ overlays: newOverlays })
       setSelectedId(overlay.id)
       notifyChange(newOverlays)
     },
-    [overlays, notifyChange]
+    [overlays, notifyChange, updateState]
   )
 
   // Update an overlay
   const handleUpdateOverlay = useCallback(
     (updated: OverlayConfig) => {
       const newOverlays = overlays.map((o) => (o.id === updated.id ? updated : o))
-      setOverlays(newOverlays)
+      updateState({ overlays: newOverlays })
       notifyChange(newOverlays)
     },
-    [overlays, notifyChange]
+    [overlays, notifyChange, updateState]
   )
 
   // Delete an overlay
   const handleDeleteOverlay = useCallback(
     (id: string) => {
       const newOverlays = overlays.filter((o) => o.id !== id)
-      setOverlays(newOverlays)
+      updateState({ overlays: newOverlays })
       if (selectedId === id) {
         setSelectedId(newOverlays.length > 0 ? newOverlays[0].id : null)
       }
       notifyChange(newOverlays)
     },
-    [overlays, selectedId, notifyChange]
+    [overlays, selectedId, notifyChange, updateState]
   )
 
   // Toggle overlay enabled state
   const handleToggleOverlay = useCallback(
     (id: string, enabled: boolean) => {
       const newOverlays = overlays.map((o) => (o.id === id ? { ...o, enabled } : o))
-      setOverlays(newOverlays)
+      updateState({ overlays: newOverlays })
       notifyChange(newOverlays)
     },
-    [overlays, notifyChange]
+    [overlays, notifyChange, updateState]
   )
 
   // Reorder overlays
   const handleReorderOverlays = useCallback(
     (newOverlays: OverlayConfig[]) => {
-      setOverlays(newOverlays)
+      updateState({ overlays: newOverlays })
       notifyChange(newOverlays)
     },
-    [notifyChange]
+    [notifyChange, updateState]
   )
 
   // Queue management
   const handleQueuesChange = useCallback(
     (newQueues: QueueConfig[]) => {
-      setQueues(newQueues)
+      updateState({ queues: newQueues })
       notifyChange(overlays, newQueues)
     },
-    [overlays, notifyChange]
+    [overlays, notifyChange, updateState]
   )
 
   // Change overlay queue assignment
@@ -201,10 +229,10 @@ function VisualOverlayEditor({
       const newOverlays = overlays.map((o) =>
         o.id === overlayId ? { ...o, grouping: { ...o.grouping, queue: queueName } } : o
       )
-      setOverlays(newOverlays)
+      updateState({ overlays: newOverlays })
       notifyChange(newOverlays)
     },
-    [overlays, notifyChange]
+    [overlays, notifyChange, updateState]
   )
 
   // Move selected overlay up/down
@@ -222,20 +250,38 @@ function VisualOverlayEditor({
       const [moved] = newOverlays.splice(currentIndex, 1)
       newOverlays.splice(newIndex, 0, moved)
 
-      setOverlays(newOverlays)
+      updateState({ overlays: newOverlays })
       notifyChange(newOverlays)
     },
-    [selectedId, overlays, notifyChange]
+    [selectedId, overlays, notifyChange, updateState]
   )
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if typing in an input/textarea
+      // Ignore if typing in an input/textarea (except for undo/redo)
       const target = e.target as HTMLElement
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      const isTextInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+
+      // Always allow undo/redo shortcuts
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !disabled) {
+        e.preventDefault()
+        if (e.shiftKey) {
+          redo()
+        } else {
+          undo()
+        }
         return
       }
+
+      if ((e.ctrlKey || e.metaKey) && e.key === 'y' && !disabled) {
+        e.preventDefault()
+        redo()
+        return
+      }
+
+      // Ignore other shortcuts if typing in an input
+      if (isTextInput) return
 
       // Ignore if disabled or in YAML view
       if (disabled || viewMode === 'yaml') return
@@ -308,6 +354,8 @@ function VisualOverlayEditor({
     handleDeleteOverlay,
     handleToggleOverlay,
     moveSelectedOverlay,
+    undo,
+    redo,
   ])
 
   return (
@@ -344,6 +392,34 @@ function VisualOverlayEditor({
       <div className="editor-header">
         <h2 className="editor-title">Overlay Editor</h2>
         <div className="header-controls">
+          <div className="undo-redo-controls">
+            <button
+              type="button"
+              className="btn btn-icon"
+              onClick={undo}
+              disabled={disabled || !canUndo}
+              title="Undo (Ctrl+Z)"
+              aria-label="Undo"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 7v6h6" />
+                <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="btn btn-icon"
+              onClick={redo}
+              disabled={disabled || !canRedo}
+              title="Redo (Ctrl+Shift+Z)"
+              aria-label="Redo"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 7v6h-6" />
+                <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7" />
+              </svg>
+            </button>
+          </div>
           <button
             type="button"
             className={`queues-btn ${showQueuesPanel ? 'active' : ''}`}
