@@ -50,6 +50,7 @@ function BeforeAfter({ beforeUrl, afterUrl, showAfter }: BeforeAfterProps) {
       )}
 
       <img
+        key={currentUrl}
         src={currentUrl}
         alt={showAfter ? 'After overlay' : 'Before overlay'}
         className={`preview-image ${imageLoaded ? 'loaded' : ''}`}
