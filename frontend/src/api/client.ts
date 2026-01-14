@@ -1,3 +1,5 @@
+import { TestOptions } from '../types/testOptions'
+
 const API_BASE = '/api';
 
 export interface ConfigAnalysis {
@@ -11,9 +13,12 @@ export interface ConfigAnalysis {
   overlayYaml: string;
 }
 
+// Job status values - must match backend/src/constants.ts
+export type JobStatusValue = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+
 export interface JobStatus {
   jobId: string;
-  status: 'queued' | 'resolving' | 'fetching' | 'rendering' | 'succeeded' | 'failed' | 'cancelled';
+  status: JobStatusValue;
   progress: number;
   createdAt: string;
   updatedAt: string;
@@ -91,6 +96,7 @@ export async function getProfile(profileId: string): Promise<ConfigAnalysis> {
 export async function startPreview(options: {
   profileId?: string;
   configYaml?: string;
+  testOptions?: TestOptions;
 }): Promise<{ jobId: string }> {
   const response = await fetch(`${API_BASE}/preview/start`, {
     method: 'POST',
@@ -103,6 +109,21 @@ export async function startPreview(options: {
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.details || error.error || 'Failed to start preview');
+  }
+
+  return response.json();
+}
+
+/**
+ * Get available preview targets
+ */
+export async function getPreviewTargets(): Promise<{
+  targets: Array<{ id: string; label: string; type: string }>;
+}> {
+  const response = await fetch(`${API_BASE}/preview/targets`);
+
+  if (!response.ok) {
+    throw new Error('Failed to get preview targets');
   }
 
   return response.json();

@@ -2,10 +2,13 @@ import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react
 import { useState } from 'react'
 import ConfigPage from './pages/Config'
 import PreviewPage from './pages/Preview'
+import ErrorBoundary from './components/ErrorBoundary'
 
 interface AppState {
   profileId: string | null
   configYaml: string
+  libraryNames: string[]
+  overlayFiles: string[]
 }
 
 function NavHeader() {
@@ -38,10 +41,17 @@ function App() {
   const [appState, setAppState] = useState<AppState>({
     profileId: null,
     configYaml: '',
+    libraryNames: [],
+    overlayFiles: [],
   })
 
-  const updateConfig = (profileId: string, configYaml: string) => {
-    setAppState({ profileId, configYaml })
+  const updateConfig = (
+    profileId: string,
+    configYaml: string,
+    libraryNames: string[] = [],
+    overlayFiles: string[] = []
+  ) => {
+    setAppState({ profileId, configYaml, libraryNames, overlayFiles })
   }
 
   return (
@@ -49,27 +59,31 @@ function App() {
       <div className="app">
         <NavHeader />
         <main className="app-main">
-          <Routes>
-            <Route
-              path="/config"
-              element={
-                <ConfigPage
-                  currentConfig={appState.configYaml}
-                  onConfigUpdate={updateConfig}
-                />
-              }
-            />
-            <Route
-              path="/preview"
-              element={
-                <PreviewPage
-                  profileId={appState.profileId}
-                  configYaml={appState.configYaml}
-                />
-              }
-            />
-            <Route path="/" element={<Navigate to="/config" replace />} />
-          </Routes>
+          <ErrorBoundary>
+            <Routes>
+              <Route
+                path="/config"
+                element={
+                  <ConfigPage
+                    currentConfig={appState.configYaml}
+                    onConfigUpdate={updateConfig}
+                  />
+                }
+              />
+              <Route
+                path="/preview"
+                element={
+                  <PreviewPage
+                    profileId={appState.profileId}
+                    configYaml={appState.configYaml}
+                    libraryNames={appState.libraryNames}
+                    overlayFiles={appState.overlayFiles}
+                  />
+                }
+              />
+              <Route path="/" element={<Navigate to="/config" replace />} />
+            </Routes>
+          </ErrorBoundary>
         </main>
         <footer className="app-footer">
           <p>

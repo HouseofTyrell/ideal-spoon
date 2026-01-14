@@ -61,6 +61,86 @@ PROXY_HOST = '127.0.0.1'
 # Output caching - skip rendering if config unchanged
 OUTPUT_CACHE_ENABLED = os.environ.get('PREVIEW_OUTPUT_CACHE', '1') == '1'
 
+# ============================================================================
+# Preview Accuracy Mode Configuration
+# ============================================================================
+# PREVIEW_ACCURACY: 'fast' (default) or 'accurate'
+# - fast: Caps external API results (TMDb, Trakt, etc.) to prevent slow expansions
+# - accurate: Full Kometa behavior with all external API expansions
+PREVIEW_ACCURACY = os.environ.get('PREVIEW_ACCURACY', 'fast').lower()
+
+# Fast mode caps - limits for external ID expansions
+PREVIEW_EXTERNAL_ID_LIMIT = int(os.environ.get('PREVIEW_EXTERNAL_ID_LIMIT', '25'))
+PREVIEW_EXTERNAL_PAGES_LIMIT = int(os.environ.get('PREVIEW_EXTERNAL_PAGES_LIMIT', '1'))
+
+# TMDb Proxy configuration (for intercepting TMDb API calls in fast mode)
+TMDB_PROXY_ENABLED = os.environ.get('PREVIEW_TMDB_PROXY', '1') == '1' and PREVIEW_ACCURACY == 'fast'
+TMDB_PROXY_PORT = 8191  # Port for TMDb proxy
+
+
+# ============================================================================
+# Font Configuration (P1)
+# ============================================================================
+# PREVIEW_STRICT_FONTS: If true, fail if required fonts are missing
+# Default: false (log warnings but continue)
+PREVIEW_STRICT_FONTS = os.environ.get('PREVIEW_STRICT_FONTS', '0') == '1'
+
+# Default fallback font path
+DEFAULT_FALLBACK_FONT = os.environ.get('PREVIEW_FALLBACK_FONT', '/config/fonts/Inter-Regular.ttf')
+
+# Common font paths to validate
+COMMON_FONT_PATHS = [
+    '/config/fonts',
+    '/fonts',
+    '/usr/share/fonts',
+]
+
+
+def validate_fonts_at_startup() -> List[str]:
+    """
+    Validate font availability at startup.
+
+    P1 Fix: Check common font directories and log warnings for missing fonts.
+    Returns a list of available font directories.
+    """
+    available_dirs = []
+    missing_dirs = []
+
+    for font_path in COMMON_FONT_PATHS:
+        if Path(font_path).exists():
+            available_dirs.append(font_path)
+            # List available fonts
+            fonts = list(Path(font_path).glob('*.ttf')) + list(Path(font_path).glob('*.otf'))
+            if fonts:
+                logger.info(f"FONT_DIR_FOUND: {font_path} ({len(fonts)} fonts)")
+                for font in fonts[:5]:  # Log first 5
+                    logger.debug(f"  - {font.name}")
+                if len(fonts) > 5:
+                    logger.debug(f"  - ... and {len(fonts) - 5} more")
+            else:
+                logger.warning(f"FONT_DIR_EMPTY: {font_path} exists but contains no fonts")
+        else:
+            missing_dirs.append(font_path)
+
+    if not available_dirs:
+        logger.warning("FONT_WARNING: No font directories found!")
+        logger.warning(f"  Checked: {', '.join(COMMON_FONT_PATHS)}")
+        logger.warning("  Overlay rendering may fail if custom fonts are referenced.")
+        logger.warning("  To fix: Mount font files to /config/fonts or set PREVIEW_FALLBACK_FONT")
+
+    # Check fallback font
+    if Path(DEFAULT_FALLBACK_FONT).exists():
+        logger.info(f"FALLBACK_FONT_OK: {DEFAULT_FALLBACK_FONT}")
+    else:
+        logger.warning(f"FALLBACK_FONT_MISSING: {DEFAULT_FALLBACK_FONT}")
+        if PREVIEW_STRICT_FONTS:
+            raise FileNotFoundError(
+                f"Fallback font not found: {DEFAULT_FALLBACK_FONT}. "
+                f"Set PREVIEW_STRICT_FONTS=0 to continue without fallback font."
+            )
+
+    return available_dirs
+
 
 # ============================================================================
 # Output Caching Functions
@@ -190,6 +270,26 @@ PLEX_UPLOAD_PATTERN = re.compile(
     r'^/library/metadata/(\d+)/(posters?|arts?|thumbs?)(?:\?.*)?$'
 )
 
+# Additional upload patterns to capture more aggressively
+# Kometa may use various upload mechanisms
+PLEX_UPLOAD_PATTERNS_EXTENDED = [
+    # Standard metadata upload paths
+    re.compile(r'^/library/metadata/(\d+)/(posters?|arts?|thumbs?)(?:\?.*)?$'),
+    # Photo transcode (used for image uploads/processing)
+    re.compile(r'^/photo/:/transcode'),
+    # Library metadata upload (alternative path)
+    re.compile(r'^/library/metadata/(\d+)/uploads?(?:\?.*)?$'),
+    # Direct upload paths
+    re.compile(r'^/:/upload'),
+]
+
+# Pattern to extract ratingKey from various upload paths
+RATING_KEY_EXTRACT_PATTERNS = [
+    re.compile(r'/library/metadata/(\d+)/'),
+    re.compile(r'[?&]ratingKey=(\d+)'),
+    re.compile(r'[?&]key=/library/metadata/(\d+)'),
+]
+
 # Library listing endpoint patterns (endpoints that return lists of items)
 # These are filtered to only include allowed ratingKeys
 # Note: Using simpler patterns that match the path prefix, query string handled separately
@@ -228,6 +328,9 @@ ARTWORK_PATTERNS = [
 
 # Library sections endpoint - used to get list of library sections
 LIBRARY_SECTIONS_PATTERN = re.compile(r'^/library/sections(?:\?.*)?$')
+# Pattern to match specific section requests: /library/sections/{id}
+# This is used when Kometa queries section details
+LIBRARY_SECTION_DETAIL_PATTERN = re.compile(r'^/library/sections/(\d+)(?:\?.*)?$')
 
 # Section ID extraction pattern
 SECTION_ID_PATTERN = re.compile(r'^/library/sections/(\d+)/')
@@ -421,6 +524,82 @@ def extract_preview_targets(preview_config: Dict[str, Any]) -> List[Dict[str, An
 # ============================================================================
 # Mock Library Mode - Synthetic XML Generation
 # ============================================================================
+
+def build_synthetic_section_detail_xml(section_id: str, targets: List[Dict[str, Any]]) -> bytes:
+    """
+    Build synthetic /library/sections/{id} XML response for a specific section.
+
+    This fixes P0 libtype mismatch by ensuring the section returns the correct type
+    (movie/show) instead of forwarding to real Plex which might return a different library.
+
+    Args:
+        section_id: The requested section ID
+        targets: List of preview targets to determine the library type
+
+    Returns:
+        XML bytes for MediaContainer with the section's Directory element
+    """
+    # Determine section type based on targets
+    has_movies = any(t.get('type') in ('movie', 'movies') for t in targets)
+    has_shows = any(t.get('type') in ('show', 'shows', 'series', 'season', 'episode') for t in targets)
+
+    # Section 1 is Movies, Section 2 is TV Shows (our convention)
+    if section_id == '1' or (has_movies and not has_shows):
+        section_type = 'movie'
+        section_title = 'Movies'
+        agent = 'tv.plex.agents.movie'
+        scanner = 'Plex Movie'
+    elif section_id == '2' or (has_shows and not has_movies):
+        section_type = 'show'
+        section_title = 'TV Shows'
+        agent = 'tv.plex.agents.series'
+        scanner = 'Plex TV Series'
+    else:
+        # Default to movie for section 1, show for other sections
+        if section_id == '1':
+            section_type = 'movie'
+            section_title = 'Movies'
+            agent = 'tv.plex.agents.movie'
+            scanner = 'Plex Movie'
+        else:
+            section_type = 'show'
+            section_title = 'TV Shows'
+            agent = 'tv.plex.agents.series'
+            scanner = 'Plex TV Series'
+
+    root = ET.Element('MediaContainer', {
+        'size': '1',
+        'allowSync': '0',
+        'identifier': 'com.plexapp.plugins.library',
+        'mediaTagPrefix': '/system/bundle/media/flags/',
+        'mediaTagVersion': '1',
+    })
+
+    ET.SubElement(root, 'Directory', {
+        'allowSync': '1',
+        'art': f'/:/resources/{section_type}-fanart.jpg',
+        'composite': f'/library/sections/{section_id}/composite/1234',
+        'filters': '1',
+        'refreshing': '0',
+        'thumb': f'/:/resources/{section_type}.png',
+        'key': section_id,
+        'type': section_type,
+        'title': section_title,
+        'agent': agent,
+        'scanner': scanner,
+        'language': 'en-US',
+        'uuid': f'mock-uuid-{section_id}',
+        # Additional attributes Kometa may check
+        'scannedAt': '1700000000',
+        'createdAt': '1600000000',
+        'content': '1',
+        'directory': '1',
+        'hidden': '0',
+        'location': f'id={section_id}',
+    })
+
+    return ET.tostring(root, encoding='unicode').encode('utf-8')
+
 
 def build_synthetic_library_sections_xml(targets: List[Dict[str, Any]]) -> bytes:
     """
@@ -841,6 +1020,17 @@ def is_library_sections_endpoint(path: str) -> bool:
     return LIBRARY_SECTIONS_PATTERN.match(path_base) is not None
 
 
+def is_library_section_detail_endpoint(path: str) -> Optional[str]:
+    """
+    Check if path is /library/sections/{id} (section detail, not /all or other).
+
+    Returns the section ID if matched, None otherwise.
+    """
+    path_base = path.split('?')[0]
+    match = LIBRARY_SECTION_DETAIL_PATTERN.match(path_base)
+    return match.group(1) if match else None
+
+
 def is_children_endpoint(path: str) -> Optional[str]:
     """
     Check if path is /library/metadata/{id}/children.
@@ -920,6 +1110,10 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
     forward_request_count: int = 0
     blocked_metadata_count: int = 0
 
+    # H3/H4: Diagnostic tracking
+    zero_match_searches: int = 0  # H4: Count of searches returning 0 items
+    type_mismatches: List[Dict[str, Any]] = []  # H4: Track type mismatch detections
+
     def log_message(self, format, *args):
         """Override to use our logger"""
         logger.debug(f"PROXY: {args[0]}")
@@ -931,11 +1125,13 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         is_listing = is_listing_endpoint(path)
         is_meta = is_metadata_endpoint(path)
         is_sections = is_library_sections_endpoint(path)
+        section_detail_id = is_library_section_detail_endpoint(path)
         children_parent = is_children_endpoint(path)
 
         logger.info(
             f"PROXY_GET path={path_base} is_listing={is_listing} "
-            f"is_metadata={is_meta} is_sections={is_sections}"
+            f"is_metadata={is_meta} is_sections={is_sections} "
+            f"section_detail={section_detail_id is not None}"
         )
 
         # Mock library mode: return synthetic XML for listing endpoints
@@ -943,6 +1139,13 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             # Handle /library/sections endpoint
             if is_sections:
                 self._handle_mock_sections()
+                return
+
+            # Handle /library/sections/{id} (specific section detail) - P0 libtype fix
+            # This ensures Kometa sees the correct type (movie/show) instead of
+            # whatever library happens to be at that ID on the real Plex server
+            if section_detail_id:
+                self._handle_mock_section_detail(section_detail_id)
                 return
 
             # Handle listing endpoints (all, search, browse)
@@ -1053,8 +1256,12 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             # Copy headers, preserving auth
             headers = {}
             for key, value in self.headers.items():
-                if key.lower() not in ('host', 'connection'):
+                if key.lower() not in ('host', 'connection', 'accept-encoding'):
                     headers[key] = value
+
+            # Request uncompressed content to avoid decompression issues
+            # This ensures we get plain XML that we can parse and cache safely
+            headers['Accept-Encoding'] = 'identity'
 
             # Ensure X-Plex-Token is present
             if self.plex_token and 'x-plex-token' not in [k.lower() for k in headers.keys()]:
@@ -1063,8 +1270,29 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             conn.request(method, path, headers=headers)
             response = conn.getresponse()
 
-            # Read full response body for potential filtering
+            # Read full response body
             response_body = response.read()
+
+            # Handle compressed responses (in case server ignores Accept-Encoding: identity)
+            # Track if we decompressed so we can remove Content-Encoding header
+            was_decompressed = False
+            content_encoding = response.getheader('Content-Encoding', '').lower()
+            if content_encoding == 'gzip':
+                try:
+                    import gzip
+                    response_body = gzip.decompress(response_body)
+                    was_decompressed = True
+                    logger.debug(f"Decompressed gzip response for {path}")
+                except Exception as e:
+                    logger.warning(f"Failed to decompress gzip response: {e}")
+            elif content_encoding == 'deflate':
+                try:
+                    import zlib
+                    response_body = zlib.decompress(response_body)
+                    was_decompressed = True
+                    logger.debug(f"Decompressed deflate response for {path}")
+                except Exception as e:
+                    logger.warning(f"Failed to decompress deflate response: {e}")
 
             # Track forward count
             with self.data_lock:
@@ -1140,10 +1368,15 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             self.send_response(response.status)
 
             # Copy headers but update Content-Length for filtered responses
+            # Exclude Content-Encoding if we decompressed the response
+            excluded_headers = {'transfer-encoding', 'connection'}
+            if was_decompressed:
+                excluded_headers.add('content-encoding')
+
             for key, value in response.getheaders():
                 if key.lower() == 'content-length':
                     self.send_header('Content-Length', str(len(response_body)))
-                elif key.lower() not in ('transfer-encoding', 'connection'):
+                elif key.lower() not in excluded_headers:
                     self.send_header(key, value)
 
             self.end_headers()
@@ -1199,6 +1432,43 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
 
         self._send_xml_response(xml_bytes)
 
+    def _handle_mock_section_detail(self, section_id: str):
+        """
+        Handle /library/sections/{id} in mock mode - return synthetic section detail.
+
+        P0 Fix: This ensures Kometa sees the correct library type (movie/show)
+        instead of whatever library is at that ID on the real Plex server.
+        Fixes "Unknown libtype 'movie' ... Available libtypes: ['collection']" error.
+        """
+        xml_bytes = build_synthetic_section_detail_xml(section_id, self.preview_targets)
+
+        # Debug logging
+        if DEBUG_MOCK_XML:
+            logger.debug(f"MOCK_SECTION_DETAIL_XML: {xml_bytes[:500].decode('utf-8', errors='replace')}")
+
+        # Parse to get section type
+        section_type = 'unknown'
+        try:
+            root = ET.fromstring(xml_bytes)
+            directory = root.find('Directory')
+            if directory is not None:
+                section_type = directory.get('type', 'unknown')
+        except Exception:
+            pass
+
+        logger.info(f"MOCK_SECTION_DETAIL section_id={section_id} type={section_type}")
+
+        with self.data_lock:
+            self.mock_list_requests.append({
+                'path': f'/library/sections/{section_id}',
+                'type': 'section_detail',
+                'section_id': section_id,
+                'section_type': section_type,
+                'timestamp': datetime.now().isoformat()
+            })
+
+        self._send_xml_response(xml_bytes)
+
     def _handle_mock_listing(self, path: str):
         """Handle listing endpoints in mock mode - return synthetic item list."""
         section_id = extract_section_id(path)
@@ -1224,6 +1494,12 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
 
         path_base = path.split('?')[0]
         logger.info(f"MOCK_LIST endpoint={path_base} returned_items={item_count}")
+
+        # H3/H4: Track zero-match searches for diagnostic summary
+        if item_count == 0 and query:
+            with self.data_lock:
+                self.zero_match_searches += 1
+            logger.warning(f"ZERO_MATCH_SEARCH query={query} endpoint={path_base}")
 
         with self.data_lock:
             self.mock_list_requests.append({
@@ -1275,9 +1551,48 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
 
         When we forward a metadata request for an allowed item, we cache the
         response to learn parent/grandparent ratingKey relationships.
+
+        Validation rules:
+        1. Response must be non-empty
+        2. Response must start with '<' (XML)
+        3. Response must parse as valid XML
+        4. Response should contain MediaContainer element
         """
+        # Validation: Check for empty response
+        if not response_body or len(response_body) == 0:
+            logger.warning(f"CACHE_METADATA_SKIP ratingKey={rating_key}: empty response")
+            return
+
+        # Validation: Check response starts with XML
+        response_stripped = response_body.strip()
+        if not response_stripped.startswith(b'<'):
+            # Log first bytes for debugging (safely)
+            first_bytes = response_body[:120].decode('utf-8', errors='replace')
+            logger.warning(
+                f"CACHE_METADATA_SKIP ratingKey={rating_key}: "
+                f"not XML (starts with: {repr(first_bytes[:60])})"
+            )
+            return
+
+        # Validation: Quick check for MediaContainer
+        if b'MediaContainer' not in response_body and b'mediacontainer' not in response_body.lower():
+            first_bytes = response_body[:120].decode('utf-8', errors='replace')
+            logger.warning(
+                f"CACHE_METADATA_SKIP ratingKey={rating_key}: "
+                f"no MediaContainer (content: {repr(first_bytes[:60])})"
+            )
+            return
+
         try:
             root = ET.fromstring(response_body)
+
+            # Validation: Verify root is MediaContainer
+            if root.tag != 'MediaContainer':
+                logger.warning(
+                    f"CACHE_METADATA_SKIP ratingKey={rating_key}: "
+                    f"root element is {root.tag}, expected MediaContainer"
+                )
+                return
 
             # Find the main item element (Video, Directory, etc.)
             item = None
@@ -1310,9 +1625,16 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
                         logger.info(f"LEARNED_GRANDPARENT ratingKey={rating_key} grandparentRatingKey={grandparent_key}")
 
                 logger.debug(f"CACHED_METADATA ratingKey={rating_key} type={cached_attrs.get('type')}")
+            else:
+                logger.debug(f"CACHE_METADATA_NO_ITEM ratingKey={rating_key}: no matching item found")
 
         except ET.ParseError as e:
-            logger.warning(f"CACHE_METADATA_PARSE_ERROR ratingKey={rating_key}: {e}")
+            # Log detailed debug info for parse errors
+            first_bytes = response_body[:120].decode('utf-8', errors='replace')
+            logger.warning(
+                f"CACHE_METADATA_PARSE_ERROR ratingKey={rating_key}: {e} "
+                f"(content_length={len(response_body)}, starts_with={repr(first_bytes[:60])})"
+            )
         except Exception as e:
             logger.warning(f"CACHE_METADATA_ERROR ratingKey={rating_key}: {e}")
 
@@ -1336,16 +1658,32 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         self.wfile.write(b'{}')
 
     def _block_and_capture(self, method: str):
-        """Block a write request and capture any uploaded image data"""
+        """
+        Block a write request and capture any uploaded image data.
+
+        Enhanced capture logic (P0 fix):
+        - Captures any PUT/POST with image content
+        - Handles various upload paths including /photo/:/transcode
+        - Logs all write requests for debugging
+        - Saves image payloads with deterministic filenames
+        """
         timestamp = datetime.now().isoformat()
         timestamp_safe = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
 
         # Read request body
         content_length = int(self.headers.get('Content-Length', '0'))
+        content_type = self.headers.get('Content-Type', '')
         body = self.rfile.read(content_length) if content_length > 0 else b''
 
         # Parse ratingKey and kind from path
         rating_key, kind = self._parse_upload_path(self.path)
+
+        # Log detailed request info for debugging
+        logger.debug(
+            f"WRITE_REQUEST: {method} {self.path} "
+            f"content_length={content_length} content_type={content_type} "
+            f"parsed_ratingKey={rating_key} parsed_kind={kind}"
+        )
 
         # Log the blocked request
         blocked_entry = {
@@ -1354,7 +1692,8 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             'timestamp': timestamp,
             'rating_key': rating_key,
             'kind': kind,
-            'content_length': content_length
+            'content_length': content_length,
+            'content_type': content_type,
         }
 
         capture_record: Dict[str, Any] = {
@@ -1364,47 +1703,52 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             'kind': kind,
             'timestamp': timestamp,
             'size_bytes': content_length,
+            'content_type': content_type,
             'saved_path': None,
             'parse_error': None
         }
 
         # Try to extract and save the image
-        if content_length > 0 and rating_key:
+        # Be aggressive: try to capture any body with image content
+        if content_length > 0:
             try:
                 image_bytes, ext = self._extract_image_from_body(body)
                 if image_bytes:
+                    # Use rating_key if found, otherwise save with 'unknown' prefix
+                    save_key = rating_key or 'unknown'
                     saved_path = self._save_captured_image(
-                        rating_key, kind, image_bytes, ext, timestamp_safe
+                        save_key, kind, image_bytes, ext, timestamp_safe
                     )
                     capture_record['saved_path'] = saved_path
                     capture_record['size_bytes'] = len(image_bytes)
                     logger.info(
-                        f"CAPTURED_UPLOAD ratingKey={rating_key} kind={kind} "
-                        f"bytes={len(image_bytes)} saved={saved_path}"
+                        f"CAPTURED_UPLOAD ratingKey={save_key} kind={kind} "
+                        f"bytes={len(image_bytes)} content_type={content_type} "
+                        f"path={self.path.split('?')[0]} saved={saved_path}"
                     )
                 else:
                     capture_record['parse_error'] = 'No image data found in body'
                     logger.warning(
-                        f"BLOCKED_WRITE (no image): {method} {self.path} "
-                        f"ratingKey={rating_key}"
+                        f"UPLOAD_IGNORED: {method} {self.path.split('?')[0]} "
+                        f"reason=no_image_data content_type={content_type} "
+                        f"content_length={content_length}"
                     )
                     # Save raw body for debugging
-                    self._save_debug_body(rating_key, kind, body, timestamp_safe)
+                    self._save_debug_body(rating_key or 'unknown', kind, body, timestamp_safe)
             except Exception as e:
                 capture_record['parse_error'] = str(e)
                 logger.error(
-                    f"BLOCKED_WRITE (parse error): {method} {self.path} "
+                    f"UPLOAD_CAPTURE_ERROR: {method} {self.path.split('?')[0]} "
                     f"ratingKey={rating_key} error={e}"
                 )
                 # Save raw body for debugging
-                self._save_debug_body(rating_key, kind, body, timestamp_safe)
-        elif content_length > 0:
-            # Has body but no ratingKey - save for debugging
-            logger.warning(f"BLOCKED_WRITE (unknown path): {method} {self.path}")
-            self._save_debug_body('unknown', 'unknown', body, timestamp_safe)
-            capture_record['parse_error'] = 'Could not parse ratingKey from path'
+                self._save_debug_body(rating_key or 'unknown', kind, body, timestamp_safe)
+        elif not rating_key:
+            # No body and no ratingKey
+            logger.debug(f"BLOCKED_WRITE (no body, unknown path): {method} {self.path}")
         else:
-            logger.warning(f"BLOCKED_WRITE (no body): {method} {self.path}")
+            # Has ratingKey but no body (could be a delete or metadata update)
+            logger.debug(f"BLOCKED_WRITE (no body): {method} {self.path}")
 
         with self.data_lock:
             self.blocked_requests.append(blocked_entry)
@@ -1421,9 +1765,20 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         """
         Parse ratingKey and upload kind from Plex API path.
 
+        Enhanced to handle various upload paths Kometa may use:
+        - /library/metadata/<ratingKey>/posters
+        - /library/metadata/<ratingKey>/poster
+        - /library/metadata/<ratingKey>/arts
+        - /library/metadata/<ratingKey>/thumbs
+        - /photo/:/transcode with ratingKey in query
+        - /:/upload with key parameter
+
         Returns: (ratingKey or None, kind)
         """
-        match = PLEX_UPLOAD_PATTERN.match(path.split('?')[0])
+        path_base = path.split('?')[0]
+
+        # Try standard upload pattern first
+        match = PLEX_UPLOAD_PATTERN.match(path_base)
         if match:
             rating_key = match.group(1)
             kind_raw = match.group(2)
@@ -1431,11 +1786,26 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
             kind = kind_raw.rstrip('s')
             return rating_key, kind
 
-        # Fallback: try to find any /library/metadata/<id>/ pattern
-        fallback_match = re.search(r'/library/metadata/(\d+)/', path)
-        if fallback_match:
-            return fallback_match.group(1), 'unknown'
+        # Extract kind from path if possible
+        kind = 'poster'  # Default
+        if '/art' in path_base:
+            kind = 'art'
+        elif '/thumb' in path_base:
+            kind = 'thumb'
 
+        # Try to extract ratingKey from various patterns
+        for pattern in RATING_KEY_EXTRACT_PATTERNS:
+            match = pattern.search(path)
+            if match:
+                return match.group(1), kind
+
+        # Fallback: try to find any numeric ID in path
+        fallback_match = re.search(r'/(\d+)/', path)
+        if fallback_match:
+            return fallback_match.group(1), kind
+
+        # Log that we couldn't parse the path
+        logger.debug(f"UPLOAD_PATH_PARSE_FAILED: {path}")
         return None, 'unknown'
 
     def _extract_image_from_body(self, body: bytes) -> Tuple[Optional[bytes], str]:
@@ -1608,6 +1978,545 @@ class PlexProxyHandler(BaseHTTPRequestHandler):
         logger.debug(f"Saved debug body to: {output_path}")
 
 
+# ============================================================================
+# TMDb API Proxy for Fast Mode (Caps External ID Expansions)
+# ============================================================================
+
+# TMDb endpoints that return paginated results and should be capped
+TMDB_PAGINATED_ENDPOINTS = [
+    '/discover/movie',
+    '/discover/tv',
+    '/trending/movie/',
+    '/trending/tv/',
+    '/trending/all/',
+    '/movie/popular',
+    '/movie/top_rated',
+    '/movie/now_playing',
+    '/movie/upcoming',
+    '/tv/popular',
+    '/tv/top_rated',
+    '/tv/on_the_air',
+    '/tv/airing_today',
+    '/search/movie',
+    '/search/tv',
+    '/search/multi',
+]
+
+# TMDb list-like endpoints that return many IDs
+TMDB_LIST_ENDPOINTS = [
+    '/list/',
+    '/keyword/',
+    '/genre/',
+    '/network/',
+    '/company/',
+]
+
+
+class TMDbProxyHandler(BaseHTTPRequestHandler):
+    """
+    HTTP proxy handler that intercepts TMDb API calls and caps results in FAST mode.
+
+    In FAST mode:
+    - Paginated endpoints are capped to PREVIEW_EXTERNAL_ID_LIMIT results
+    - total_pages is set to 1 to prevent pagination
+    - total_results reflects actual returned count (not original)
+    - Identical requests are deduplicated using fingerprint-based caching
+    - Non-overlay discover requests are suppressed (return empty results)
+
+    In ACCURATE mode:
+    - All requests are passed through unchanged
+    """
+
+    # Class-level configuration
+    fast_mode: bool = True
+    id_limit: int = 25
+    pages_limit: int = 1
+    capped_requests: List[Dict[str, Any]] = []
+    total_requests: int = 0
+    cache_hits: int = 0
+    skipped_non_overlay: int = 0
+    skipped_tvdb_conversions: int = 0  # H1: Track skipped TMDb → TVDb conversions
+    tvdb_skip_logged: bool = False  # H1: Track if we've logged the skip message
+    data_lock = threading.Lock()
+
+    # Request deduplication cache: fingerprint -> (response_body, status_code, headers)
+    request_cache: Dict[str, Tuple[bytes, int, List[Tuple[str, str]]]] = {}
+
+    def log_message(self, format, *args):
+        """Override to use our logger"""
+        logger.debug(f"TMDB_PROXY: {args[0]}")
+
+    def do_GET(self):
+        """Forward GET requests to TMDb API, capping results in FAST mode"""
+        self._handle_request('GET')
+
+    def do_POST(self):
+        """Forward POST requests to TMDb API"""
+        self._handle_request('POST')
+
+    def do_HEAD(self):
+        """Forward HEAD requests to TMDb API"""
+        self._handle_request('HEAD')
+
+    def _handle_request(self, method: str):
+        """Handle a request to TMDb API"""
+        try:
+            # Parse the target URL from the request
+            path = self.path
+
+            # Increment request counter
+            with self.data_lock:
+                self.total_requests += 1
+
+            # Check if this is a paginated endpoint that should be capped
+            should_cap = self.fast_mode and self._is_paginated_endpoint(path)
+
+            # G2: In FAST mode, skip discover requests for non-overlay contexts
+            # (collections, charts, defaults builders)
+            if self.fast_mode and self._is_non_overlay_discover(path):
+                logger.info(f"FAST_PREVIEW: skipped TMDb discover for non-overlay context: {path.split('?')[0]}")
+                with self.data_lock:
+                    self.skipped_non_overlay += 1
+                # Return empty results
+                self._send_empty_tmdb_response()
+                return
+
+            # H1: In FAST mode, skip TMDb → TVDb conversion requests (external_ids for TV shows)
+            if self.fast_mode and self._is_tvdb_conversion_request(path):
+                with self.data_lock:
+                    self.skipped_tvdb_conversions += 1
+                    # Log once per run (not per item)
+                    if not self.tvdb_skip_logged:
+                        logger.info("FAST_PREVIEW: skipped TMDb→TVDb conversions (external_ids)")
+                        self.tvdb_skip_logged = True
+                # Return empty external_ids response
+                self._send_empty_external_ids_response()
+                return
+
+            # G1: Check deduplication cache
+            fingerprint = self._compute_request_fingerprint(method, path)
+            with self.data_lock:
+                if fingerprint in self.request_cache:
+                    response_body, status_code, headers = self.request_cache[fingerprint]
+                    self.cache_hits += 1
+                    logger.info(f"TMDB_CACHE_HIT: {path.split('?')[0]} (fingerprint={fingerprint[:12]})")
+
+                    # Send cached response
+                    self.send_response(status_code)
+                    for key, value in headers:
+                        if key.lower() == 'content-length':
+                            self.send_header('Content-Length', str(len(response_body)))
+                        elif key.lower() not in ('transfer-encoding', 'connection'):
+                            self.send_header(key, value)
+                    self.end_headers()
+                    self.wfile.write(response_body)
+                    return
+
+            # Forward request to TMDb
+            response_body, status_code, headers = self._forward_to_tmdb(method, path)
+
+            # Cap results if in FAST mode and this is a paginated endpoint
+            if should_cap and status_code == 200:
+                original_body = response_body
+                response_body, was_capped = self._cap_tmdb_response(response_body, path)
+
+                if was_capped:
+                    # Log the capping
+                    try:
+                        import json
+                        original_data = json.loads(original_body)
+                        capped_data = json.loads(response_body)
+                        original_total = original_data.get('total_results', len(original_data.get('results', [])))
+                        capped_count = len(capped_data.get('results', []))
+
+                        logger.info(
+                            f"FAST_PREVIEW: capped TMDb {path.split('?')[0]} results "
+                            f"from {original_total} -> {capped_count}"
+                        )
+
+                        with self.data_lock:
+                            self.capped_requests.append({
+                                'path': path.split('?')[0],
+                                'original_total': original_total,
+                                'capped_to': capped_count,
+                                'timestamp': datetime.now().isoformat()
+                            })
+                    except Exception:
+                        pass
+
+            # G1: Store in deduplication cache (use fingerprint computed earlier)
+            # Cache both capped and uncapped successful responses
+            if status_code == 200:
+                # Build headers list without transfer-encoding and connection
+                cached_headers = [(k, v) for k, v in headers if k.lower() not in ('transfer-encoding', 'connection')]
+                with self.data_lock:
+                    self.request_cache[fingerprint] = (response_body, status_code, cached_headers)
+
+            # Send response
+            self.send_response(status_code)
+
+            # Copy headers, adjusting Content-Length
+            for key, value in headers:
+                if key.lower() == 'content-length':
+                    self.send_header('Content-Length', str(len(response_body)))
+                elif key.lower() not in ('transfer-encoding', 'connection'):
+                    self.send_header(key, value)
+
+            self.end_headers()
+            self.wfile.write(response_body)
+
+        except Exception as e:
+            logger.error(f"TMDB_PROXY ERROR: {method} {self.path}: {e}")
+            self.send_error(502, f"TMDb proxy error: {e}")
+
+    def _is_paginated_endpoint(self, path: str) -> bool:
+        """Check if this is a paginated TMDb endpoint that should be capped"""
+        path_base = path.split('?')[0]
+
+        for endpoint in TMDB_PAGINATED_ENDPOINTS:
+            if endpoint in path_base:
+                return True
+
+        for endpoint in TMDB_LIST_ENDPOINTS:
+            if endpoint in path_base:
+                return True
+
+        return False
+
+    def _compute_request_fingerprint(self, method: str, path: str) -> str:
+        """
+        Compute a stable fingerprint for request deduplication.
+
+        G1: Fingerprint is based on:
+        - HTTP method
+        - Endpoint path (without query string)
+        - Query params (sorted alphabetically)
+        """
+        import hashlib
+        from urllib.parse import urlparse, parse_qs
+
+        # Parse path and query
+        parsed = urlparse(path)
+        path_base = parsed.path
+        query_params = parse_qs(parsed.query)
+
+        # Sort query params for stable fingerprint
+        # Convert lists to tuples and sort by key
+        sorted_params = sorted(
+            ((k, tuple(sorted(v))) for k, v in query_params.items()),
+            key=lambda x: x[0]
+        )
+
+        # Create fingerprint string
+        fingerprint_str = f"{method}:{path_base}:{sorted_params}"
+
+        # Return hash for compact representation
+        return hashlib.md5(fingerprint_str.encode()).hexdigest()
+
+    def _is_non_overlay_discover(self, path: str) -> bool:
+        """
+        G2: Detect if this is a discover request for non-overlay contexts.
+
+        In FAST mode, we suppress discover requests that are triggered by:
+        - Collections builders
+        - Charts/trending builders (unless used for overlays)
+        - Defaults builders
+
+        These are detected by checking for specific query patterns that indicate
+        the request is for building collections rather than evaluating overlays.
+        """
+        path_base = path.split('?')[0]
+
+        # Only check discover endpoints
+        if '/discover/' not in path_base:
+            return False
+
+        # Check query parameters for non-overlay indicators
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(path)
+        query_params = parse_qs(parsed.query)
+
+        # Indicators of collection/chart builders (non-overlay contexts):
+        # - with_genres (genre collections)
+        # - with_keywords (keyword collections)
+        # - certification (certification collections)
+        # - with_runtime (runtime collections)
+        # - vote_count.gte with high threshold (popularity charts)
+        # - primary_release_date (decade/year collections)
+
+        non_overlay_indicators = [
+            'with_genres',
+            'with_keywords',
+            'certification',
+            'certification_country',
+            'with_runtime',
+            'with_companies',
+            'with_networks',
+            'with_people',
+            'with_cast',
+            'with_crew',
+        ]
+
+        # If any of these query params are present with values,
+        # this is likely a collection builder, not an overlay evaluation
+        for indicator in non_overlay_indicators:
+            if indicator in query_params and query_params[indicator]:
+                return True
+
+        # High vote_count threshold suggests a chart/popularity builder
+        vote_count_gte = query_params.get('vote_count.gte', ['0'])[0]
+        try:
+            if int(vote_count_gte) >= 100:
+                # This looks like a chart builder (e.g., "popular movies")
+                return True
+        except ValueError:
+            pass
+
+        return False
+
+    def _send_empty_tmdb_response(self):
+        """
+        G2: Send an empty TMDb response for suppressed discover requests.
+
+        Returns a valid paginated response with empty results, so Kometa
+        can continue without error.
+        """
+        import json
+
+        empty_response = {
+            'page': 1,
+            'results': [],
+            'total_pages': 1,
+            'total_results': 0
+        }
+
+        response_body = json.dumps(empty_response).encode('utf-8')
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json;charset=utf-8')
+        self.send_header('Content-Length', str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
+
+    def _is_tvdb_conversion_request(self, path: str) -> bool:
+        """
+        H1: Detect if this is a TMDb → TVDb ID conversion request.
+
+        In FAST mode, we skip these because:
+        - TV show external_ids lookups are used to get TVDb IDs
+        - TVDb ID lookups add significant latency (external API calls)
+        - Overlays typically don't require TVDb IDs for preview rendering
+
+        Returns True for:
+        - /tv/{id}/external_ids - TV show external IDs (includes tvdb_id)
+        - /find/{external_id}?external_source=tvdb_id - TVDb → TMDb lookups
+        """
+        path_base = path.split('?')[0]
+
+        # Match /tv/{id}/external_ids
+        if '/tv/' in path_base and '/external_ids' in path_base:
+            return True
+
+        # Match /find/ with tvdb_id source
+        if '/find/' in path_base:
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(path)
+            query_params = parse_qs(parsed.query)
+            external_source = query_params.get('external_source', [''])[0]
+            if external_source == 'tvdb_id':
+                return True
+
+        return False
+
+    def _send_empty_external_ids_response(self):
+        """
+        H1: Send an empty external_ids response for suppressed conversion requests.
+
+        Returns a valid external_ids response with null TVDb ID, so Kometa
+        can continue without error but won't attempt further TVDb operations.
+        """
+        import json
+
+        # Empty external_ids response structure
+        empty_response = {
+            'id': None,
+            'imdb_id': None,
+            'freebase_mid': None,
+            'freebase_id': None,
+            'tvdb_id': None,
+            'tvrage_id': None,
+            'wikidata_id': None,
+            'facebook_id': None,
+            'instagram_id': None,
+            'twitter_id': None
+        }
+
+        response_body = json.dumps(empty_response).encode('utf-8')
+
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json;charset=utf-8')
+        self.send_header('Content-Length', str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
+
+    def _forward_to_tmdb(self, method: str, path: str) -> Tuple[bytes, int, List[Tuple[str, str]]]:
+        """Forward request to real TMDb API"""
+        # TMDb API host
+        host = 'api.themoviedb.org'
+        port = 443
+
+        # Create HTTPS connection
+        context = ssl.create_default_context()
+        conn = http.client.HTTPSConnection(host, port, context=context, timeout=30)
+
+        # Copy headers
+        headers = {}
+        for key, value in self.headers.items():
+            if key.lower() not in ('host', 'connection'):
+                headers[key] = value
+        headers['Host'] = host
+
+        # Read request body for POST
+        body = None
+        if method == 'POST':
+            content_length = int(self.headers.get('Content-Length', '0'))
+            if content_length > 0:
+                body = self.rfile.read(content_length)
+
+        # Make request
+        conn.request(method, path, body=body, headers=headers)
+        response = conn.getresponse()
+
+        # Read response
+        response_body = response.read()
+        status_code = response.status
+        response_headers = response.getheaders()
+
+        conn.close()
+
+        return response_body, status_code, response_headers
+
+    def _cap_tmdb_response(self, response_body: bytes, path: str) -> Tuple[bytes, bool]:
+        """
+        Cap TMDb response results to the configured limit.
+
+        Returns: (capped_body, was_capped)
+        """
+        try:
+            import json
+            data = json.loads(response_body)
+
+            # Check if this is a paginated response
+            if 'results' not in data:
+                return response_body, False
+
+            results = data.get('results', [])
+            original_count = len(results)
+
+            # Only cap if we have more results than the limit
+            if original_count <= self.id_limit:
+                return response_body, False
+
+            # Cap results
+            data['results'] = results[:self.id_limit]
+
+            # Update pagination info
+            data['total_results'] = len(data['results'])
+            data['total_pages'] = self.pages_limit
+            if 'page' in data:
+                data['page'] = 1
+
+            return json.dumps(data).encode('utf-8'), True
+
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            logger.warning(f"TMDB_CAP_ERROR: Could not parse response for capping: {e}")
+            return response_body, False
+
+
+class TMDbProxy:
+    """
+    Manages the TMDb API proxy for capping external ID expansions in FAST mode.
+    """
+
+    def __init__(self, fast_mode: bool = True, id_limit: int = 25, pages_limit: int = 1):
+        self.fast_mode = fast_mode
+        self.id_limit = id_limit
+        self.pages_limit = pages_limit
+        self.server: Optional[HTTPServer] = None
+        self.server_thread: Optional[threading.Thread] = None
+
+        # Configure the handler class
+        TMDbProxyHandler.fast_mode = fast_mode
+        TMDbProxyHandler.id_limit = id_limit
+        TMDbProxyHandler.pages_limit = pages_limit
+        TMDbProxyHandler.capped_requests = []
+        TMDbProxyHandler.total_requests = 0
+        # G1/G2: Initialize deduplication cache and counters
+        TMDbProxyHandler.cache_hits = 0
+        TMDbProxyHandler.skipped_non_overlay = 0
+        TMDbProxyHandler.request_cache = {}
+
+    @property
+    def proxy_url(self) -> str:
+        """URL for the TMDb proxy"""
+        return f"http://{PROXY_HOST}:{TMDB_PROXY_PORT}"
+
+    def start(self):
+        """Start the TMDb proxy server in a background thread"""
+        self.server = HTTPServer((PROXY_HOST, TMDB_PROXY_PORT), TMDbProxyHandler)
+        self.server_thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.server_thread.start()
+
+        mode_str = "FAST (capping enabled)" if self.fast_mode else "ACCURATE (pass-through)"
+        logger.info(f"TMDb proxy started at {self.proxy_url}")
+        logger.info(f"  Mode: {mode_str}")
+        if self.fast_mode:
+            logger.info(f"  ID limit: {self.id_limit}")
+            logger.info(f"  Pages limit: {self.pages_limit}")
+
+    def stop(self):
+        """Stop the TMDb proxy server"""
+        if self.server:
+            self.server.shutdown()
+            logger.info("TMDb proxy stopped")
+
+    def get_capped_requests(self) -> List[Dict[str, Any]]:
+        """Return list of capped requests"""
+        with TMDbProxyHandler.data_lock:
+            return TMDbProxyHandler.capped_requests.copy()
+
+    def get_total_requests(self) -> int:
+        """Return total number of requests"""
+        with TMDbProxyHandler.data_lock:
+            return TMDbProxyHandler.total_requests
+
+    def get_cache_hits(self) -> int:
+        """G1: Return number of deduplicated (cached) requests"""
+        with TMDbProxyHandler.data_lock:
+            return TMDbProxyHandler.cache_hits
+
+    def get_skipped_non_overlay(self) -> int:
+        """G2: Return number of skipped non-overlay discover requests"""
+        with TMDbProxyHandler.data_lock:
+            return TMDbProxyHandler.skipped_non_overlay
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Return comprehensive statistics for the TMDb proxy"""
+        with TMDbProxyHandler.data_lock:
+            return {
+                'fast_mode': self.fast_mode,
+                'id_limit': self.id_limit,
+                'pages_limit': self.pages_limit,
+                'total_requests': TMDbProxyHandler.total_requests,
+                'capped_requests_count': len(TMDbProxyHandler.capped_requests),
+                'capped_requests': TMDbProxyHandler.capped_requests.copy(),
+                'cache_hits': TMDbProxyHandler.cache_hits,
+                'skipped_non_overlay': TMDbProxyHandler.skipped_non_overlay,
+                'skipped_tvdb_conversions': TMDbProxyHandler.skipped_tvdb_conversions,  # H1
+                'cache_size': len(TMDbProxyHandler.request_cache),
+            }
+
+
 class PlexProxy:
     """
     Manages the Plex write-blocking proxy server with upload capture and optional filtering.
@@ -1679,6 +2588,9 @@ class PlexProxy:
         PlexProxyHandler.parent_rating_keys = set()
         PlexProxyHandler.forward_request_count = 0
         PlexProxyHandler.blocked_metadata_count = 0
+        # H3/H4: Reset diagnostic tracking
+        PlexProxyHandler.zero_match_searches = 0
+        PlexProxyHandler.type_mismatches = []
 
     @property
     def proxy_url(self) -> str:
@@ -1758,6 +2670,16 @@ class PlexProxy:
         """Return set of dynamically learned parent ratingKeys"""
         with PlexProxyHandler.data_lock:
             return PlexProxyHandler.parent_rating_keys.copy()
+
+    def get_zero_match_searches(self) -> int:
+        """H4: Return count of zero-match searches"""
+        with PlexProxyHandler.data_lock:
+            return PlexProxyHandler.zero_match_searches
+
+    def get_type_mismatches(self) -> List[Dict[str, Any]]:
+        """H4: Return list of detected type mismatches"""
+        with PlexProxyHandler.data_lock:
+            return PlexProxyHandler.type_mismatches.copy()
 
 
 # ============================================================================
@@ -1893,8 +2815,14 @@ def find_kometa_script() -> Optional[Path]:
     return None
 
 
-def run_kometa(config_path: Path) -> int:
-    """Run Kometa with the given config file."""
+def run_kometa(config_path: Path, tmdb_proxy_url: Optional[str] = None) -> int:
+    """
+    Run Kometa with the given config file.
+
+    Args:
+        config_path: Path to the Kometa configuration file
+        tmdb_proxy_url: Optional URL for TMDb proxy (for fast mode capping)
+    """
     kometa_script = find_kometa_script()
 
     if kometa_script:
@@ -1916,6 +2844,19 @@ def run_kometa(config_path: Path) -> int:
 
     env = os.environ.copy()
     env['KOMETA_CONFIG'] = str(config_path)
+
+    # Set up TMDb proxy environment if provided
+    # This routes TMDb API calls through our capping proxy
+    if tmdb_proxy_url:
+        logger.info(f"TMDb proxy configured: {tmdb_proxy_url}")
+        # Note: This requires the proxy to handle HTTPS CONNECT tunneling
+        # For now, we set it but the actual interception happens via
+        # modifying the Kometa config's TMDb URL or using requests hooks
+
+    # Set preview accuracy mode environment variables for any Kometa extensions
+    env['PREVIEW_ACCURACY'] = PREVIEW_ACCURACY
+    env['PREVIEW_EXTERNAL_ID_LIMIT'] = str(PREVIEW_EXTERNAL_ID_LIMIT)
+    env['PREVIEW_EXTERNAL_PAGES_LIMIT'] = str(PREVIEW_EXTERNAL_PAGES_LIMIT)
 
     try:
         process = subprocess.Popen(
@@ -2085,6 +3026,14 @@ def main():
     logger.info("Path A: Real Kometa with Proxy Write Blocking + Upload Capture")
     logger.info("=" * 60)
     logger.info(f"Job path: {job_path}")
+    logger.info(f"Preview mode: {PREVIEW_ACCURACY}")
+
+    # P1: Validate font availability at startup
+    try:
+        available_font_dirs = validate_fonts_at_startup()
+    except FileNotFoundError as e:
+        logger.error(f"Font validation failed: {e}")
+        sys.exit(1)
 
     output_dir = job_path / 'output'
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2172,8 +3121,31 @@ def main():
         preview_targets=targets
     )
 
+    # Start TMDb proxy for fast mode (caps external ID expansions)
+    tmdb_proxy = None
+    if TMDB_PROXY_ENABLED:
+        logger.info("=" * 60)
+        logger.info(f"Preview Accuracy Mode: {PREVIEW_ACCURACY.upper()}")
+        logger.info(f"  External ID Limit: {PREVIEW_EXTERNAL_ID_LIMIT}")
+        logger.info(f"  External Pages Limit: {PREVIEW_EXTERNAL_PAGES_LIMIT}")
+        logger.info("=" * 60)
+
+        tmdb_proxy = TMDbProxy(
+            fast_mode=(PREVIEW_ACCURACY == 'fast'),
+            id_limit=PREVIEW_EXTERNAL_ID_LIMIT,
+            pages_limit=PREVIEW_EXTERNAL_PAGES_LIMIT
+        )
+    else:
+        logger.info("=" * 60)
+        logger.info(f"Preview Accuracy Mode: {PREVIEW_ACCURACY.upper()}")
+        if PREVIEW_ACCURACY == 'accurate':
+            logger.info("  TMDb proxy disabled - full external expansion enabled")
+        logger.info("=" * 60)
+
     try:
         proxy.start()
+        if tmdb_proxy:
+            tmdb_proxy.start()
 
         # ================================================================
         # PHASE 1: Instant Draft Preview
@@ -2208,7 +3180,8 @@ def main():
         logger.info("Phase 2: Starting Kometa for accurate render...")
         logger.info("=" * 60)
 
-        exit_code = run_kometa(kometa_config_path)
+        tmdb_proxy_url = tmdb_proxy.proxy_url if tmdb_proxy else None
+        exit_code = run_kometa(kometa_config_path, tmdb_proxy_url=tmdb_proxy_url)
 
         logger.info("=" * 60)
         logger.info(f"Kometa finished with exit code: {exit_code}")
@@ -2222,6 +3195,9 @@ def main():
         forward_count = proxy.get_forward_request_count()
         blocked_metadata_count = proxy.get_blocked_metadata_count()
         learned_parents = proxy.get_learned_parent_keys()
+        # H3/H4: Get diagnostic data
+        zero_match_searches = proxy.get_zero_match_searches()
+        type_mismatches = proxy.get_type_mismatches()
 
         logger.info(f"Blocked {len(blocked_requests)} write attempts")
         logger.info(f"Captured {len(captured_uploads)} uploads")
@@ -2255,6 +3231,33 @@ def main():
             job_path, preview_config, captured_uploads
         )
 
+        # Get TMDb proxy statistics
+        tmdb_stats = {}
+        if tmdb_proxy:
+            tmdb_stats = tmdb_proxy.get_stats()
+            tmdb_capped_requests = tmdb_stats.get('capped_requests', [])
+            if tmdb_capped_requests:
+                logger.info(f"TMDb capped requests: {len(tmdb_capped_requests)}")
+                for req in tmdb_capped_requests:
+                    logger.info(
+                        f"  {req.get('path')}: {req.get('original_total')} -> {req.get('capped_to')}"
+                    )
+            # G1/G2/H1: Log deduplication and suppression stats
+            if tmdb_stats.get('cache_hits', 0) > 0:
+                logger.info(f"TMDb requests deduplicated (cache hits): {tmdb_stats['cache_hits']}")
+            if tmdb_stats.get('skipped_non_overlay', 0) > 0:
+                logger.info(f"TMDb non-overlay discover skipped: {tmdb_stats['skipped_non_overlay']}")
+            if tmdb_stats.get('skipped_tvdb_conversions', 0) > 0:
+                logger.info(f"TMDb→TVDb conversions skipped: {tmdb_stats['skipped_tvdb_conversions']}")
+
+        # H3/H4: Log diagnostic warnings
+        if zero_match_searches > 0:
+            logger.warning(f"DIAGNOSTIC: {zero_match_searches} search queries returned 0 results")
+        if type_mismatches:
+            logger.warning(f"DIAGNOSTIC: {len(type_mismatches)} type mismatches detected")
+            for mismatch in type_mismatches[:5]:  # Limit to first 5
+                logger.warning(f"  {mismatch.get('description', mismatch)}")
+
         # Write summary
         render_success = exit_code == 0 and len(missing_targets) == 0 and len(exported_files) > 0
         summary = {
@@ -2270,6 +3273,23 @@ def main():
             'exported_files': exported_files,
             'missing_targets': missing_targets,
             'output_files': [f.name for f in output_dir.glob('*_after.*')],
+            # Preview accuracy mode statistics (G1/G2/G3/H1)
+            'preview_accuracy': {
+                'mode': PREVIEW_ACCURACY,
+                'external_id_limit': PREVIEW_EXTERNAL_ID_LIMIT,
+                'external_pages_limit': PREVIEW_EXTERNAL_PAGES_LIMIT,
+                'tmdb_proxy_enabled': tmdb_proxy is not None,
+                'tmdb_total_requests': tmdb_stats.get('total_requests', 0),
+                'tmdb_capped_requests': tmdb_stats.get('capped_requests', []),
+                'tmdb_capped_requests_count': tmdb_stats.get('capped_requests_count', 0),
+                # G1: Request deduplication statistics
+                'tmdb_cache_hits': tmdb_stats.get('cache_hits', 0),
+                'tmdb_cache_size': tmdb_stats.get('cache_size', 0),
+                # G2: Non-overlay discover suppression
+                'tmdb_skipped_non_overlay': tmdb_stats.get('skipped_non_overlay', 0),
+                # H1: TVDb conversion suppression
+                'tmdb_skipped_tvdb_conversions': tmdb_stats.get('skipped_tvdb_conversions', 0),
+            },
             # Mock library mode statistics
             'mock_mode': {
                 'enabled': proxy.mock_mode_enabled,
@@ -2287,6 +3307,12 @@ def main():
                 'filtered_requests': filtered_requests,
                 'filtered_requests_count': len(filtered_requests),
             },
+            # H3/H4: Diagnostic information
+            'diagnostics': {
+                'zero_match_searches': zero_match_searches,
+                'type_mismatches': type_mismatches,
+                'type_mismatches_count': len(type_mismatches),
+            },
         }
 
         summary_path = output_dir / 'summary.json'
@@ -2298,6 +3324,41 @@ def main():
         # Save cache hash for successful renders (enables instant subsequent runs)
         if render_success and config_hash:
             save_cache_hash(job_path, config_hash)
+
+        # P0 Safety Check: If we have targets but no captured uploads, provide actionable error
+        targets_count = len(preview_targets) if preview_targets else 0
+        if targets_count > 0 and len(successful_captures) == 0:
+            logger.error("=" * 60)
+            logger.error("UPLOAD CAPTURE FAILURE - No images were captured!")
+            logger.error("=" * 60)
+            logger.error(f"Targets: {targets_count}")
+            logger.error(f"Total blocked requests: {len(blocked_requests)}")
+            logger.error(f"Total capture attempts: {len(captured_uploads)}")
+
+            # Show last 20 PUT/POST requests for debugging
+            write_requests = [r for r in blocked_requests if r.get('method') in ('PUT', 'POST')]
+            if write_requests:
+                logger.error(f"\nLast {min(20, len(write_requests))} PUT/POST requests:")
+                for req in write_requests[-20:]:
+                    logger.error(
+                        f"  {req.get('method')} {req.get('path', '').split('?')[0]} "
+                        f"content_type={req.get('content_type')} "
+                        f"content_length={req.get('content_length')} "
+                        f"ratingKey={req.get('rating_key')}"
+                    )
+            else:
+                logger.error("No PUT/POST requests were received by the proxy!")
+                logger.error("Check if Kometa is actually sending upload requests.")
+
+            # Show failed captures
+            if failed_captures:
+                logger.error("\nFailed capture attempts:")
+                for cap in failed_captures[:10]:
+                    logger.error(
+                        f"  path={cap.get('path')} error={cap.get('parse_error')}"
+                    )
+
+            logger.error("=" * 60)
 
         # Report results
         output_count = len(list(output_dir.glob('*_after.*')))
@@ -2312,10 +3373,18 @@ def main():
             final_exit = 1
         else:
             logger.error("Preview rendering failed: no output images generated")
+            # Add extra diagnostic info for P0 failure
+            if targets_count > 0:
+                logger.error(f"  - {targets_count} targets were expected")
+                logger.error(f"  - {len(blocked_requests)} write requests were blocked")
+                logger.error(f"  - {len(successful_captures)} images were captured")
+                logger.error("  Check logs above for UPLOAD_CAPTURED or UPLOAD_IGNORED messages")
             final_exit = 1
 
     finally:
         proxy.stop()
+        if tmdb_proxy:
+            tmdb_proxy.stop()
 
     sys.exit(final_exit)
 

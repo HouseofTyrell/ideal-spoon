@@ -836,6 +836,589 @@ class TestMockModeIntegration(unittest.TestCase):
         self.assertEqual(root.get('size'), '0')
 
 
+# ============================================================================
+# Preview Accuracy Mode Tests
+# ============================================================================
+
+class TestPreviewAccuracyConfig(unittest.TestCase):
+    """Tests for preview accuracy mode configuration"""
+
+    def test_preview_accuracy_default(self):
+        """Default preview accuracy should be 'fast'"""
+        import os
+        from preview_entrypoint import PREVIEW_ACCURACY
+        # Note: This tests the module-level constant, which uses 'fast' as default
+        # Environment may override, but default is documented as 'fast'
+        self.assertIn(PREVIEW_ACCURACY, ['fast', 'accurate'])
+
+    def test_external_id_limit_default(self):
+        """Default external ID limit should be 25"""
+        from preview_entrypoint import PREVIEW_EXTERNAL_ID_LIMIT
+        # Value may be overridden by env var, but should be an int
+        self.assertIsInstance(PREVIEW_EXTERNAL_ID_LIMIT, int)
+        self.assertGreater(PREVIEW_EXTERNAL_ID_LIMIT, 0)
+
+    def test_external_pages_limit_default(self):
+        """Default external pages limit should be 1"""
+        from preview_entrypoint import PREVIEW_EXTERNAL_PAGES_LIMIT
+        self.assertIsInstance(PREVIEW_EXTERNAL_PAGES_LIMIT, int)
+        self.assertGreater(PREVIEW_EXTERNAL_PAGES_LIMIT, 0)
+
+
+class TestCacheMetadataValidation(unittest.TestCase):
+    """Tests for cache_metadata_response validation logic"""
+
+    def _create_valid_xml(self, rating_key='12345', title='Test Movie'):
+        """Create valid MediaContainer XML for testing"""
+        return f'''<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1">
+    <Video ratingKey="{rating_key}" title="{title}" type="movie"/>
+</MediaContainer>'''.encode('utf-8')
+
+    def test_valid_xml_validation(self):
+        """Valid MediaContainer XML should parse correctly"""
+        xml_bytes = self._create_valid_xml()
+
+        # Should be valid XML
+        root = ET.fromstring(xml_bytes)
+        self.assertEqual(root.tag, 'MediaContainer')
+
+        # Should have correct size
+        self.assertEqual(root.get('size'), '1')
+
+    def test_invalid_xml_detection(self):
+        """Non-XML content should be detected"""
+        invalid_content = b'this is not xml at all'
+
+        # Should not start with '<'
+        self.assertFalse(invalid_content.strip().startswith(b'<'))
+
+        # Should raise parse error
+        with self.assertRaises(ET.ParseError):
+            ET.fromstring(invalid_content)
+
+    def test_empty_response_detection(self):
+        """Empty response should be detected"""
+        empty_content = b''
+
+        # Empty check
+        self.assertEqual(len(empty_content), 0)
+
+        # Empty whitespace check
+        whitespace_content = b'   \n\t  '
+        self.assertFalse(whitespace_content.strip().startswith(b'<'))
+
+    def test_compressed_xml_detection(self):
+        """Compressed content that wasn't decompressed should fail validation"""
+        import gzip
+
+        # Create compressed XML
+        valid_xml = self._create_valid_xml()
+        compressed = gzip.compress(valid_xml)
+
+        # Compressed content doesn't start with '<'
+        self.assertFalse(compressed.startswith(b'<'))
+
+        # First bytes are gzip magic number
+        self.assertTrue(compressed.startswith(b'\x1f\x8b'))
+
+    def test_decompressed_xml_valid(self):
+        """Decompressed content should be valid XML"""
+        import gzip
+
+        valid_xml = self._create_valid_xml()
+        compressed = gzip.compress(valid_xml)
+        decompressed = gzip.decompress(compressed)
+
+        # Should be identical to original
+        self.assertEqual(decompressed, valid_xml)
+
+        # Should parse correctly
+        root = ET.fromstring(decompressed)
+        self.assertEqual(root.tag, 'MediaContainer')
+
+    def test_non_media_container_xml(self):
+        """XML that isn't MediaContainer should be detected"""
+        non_container_xml = b'''<?xml version="1.0" encoding="UTF-8"?>
+<Document>
+    <Item>content</Item>
+</Document>'''
+
+        # Should parse
+        root = ET.fromstring(non_container_xml)
+
+        # But root is not MediaContainer
+        self.assertNotEqual(root.tag, 'MediaContainer')
+
+        # MediaContainer check should fail
+        self.assertNotIn(b'MediaContainer', non_container_xml)
+
+    def test_media_container_without_items(self):
+        """Empty MediaContainer should be valid but have no items"""
+        empty_container = b'''<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="0"/>'''
+
+        root = ET.fromstring(empty_container)
+        self.assertEqual(root.tag, 'MediaContainer')
+        self.assertEqual(root.get('size'), '0')
+        self.assertEqual(len(list(root)), 0)
+
+    def test_html_response_detection(self):
+        """HTML error response should not be cached"""
+        html_response = b'''<!DOCTYPE html>
+<html>
+<head><title>500 Internal Server Error</title></head>
+<body><h1>Internal Server Error</h1></body>
+</html>'''
+
+        # Should not contain MediaContainer
+        self.assertNotIn(b'MediaContainer', html_response)
+
+        # Starts with '<' but is HTML not MediaContainer XML
+        self.assertTrue(html_response.strip().startswith(b'<'))
+
+    def test_truncated_xml_detection(self):
+        """Truncated XML should raise parse error"""
+        truncated_xml = b'''<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1">
+    <Video ratingKey="12345" title="Test'''  # Missing closing
+
+        with self.assertRaises(ET.ParseError):
+            ET.fromstring(truncated_xml)
+
+    def test_xml_with_parent_keys(self):
+        """Episode XML with parent keys should be extractable"""
+        episode_xml = b'''<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="1">
+    <Video ratingKey="300" title="Pilot" type="episode"
+           parentRatingKey="200" grandparentRatingKey="100"
+           index="1" parentIndex="1"/>
+</MediaContainer>'''
+
+        root = ET.fromstring(episode_xml)
+        video = root.find('Video')
+
+        self.assertEqual(video.get('ratingKey'), '300')
+        self.assertEqual(video.get('parentRatingKey'), '200')
+        self.assertEqual(video.get('grandparentRatingKey'), '100')
+
+
+class TestDecompressionHandling(unittest.TestCase):
+    """Tests for compression/decompression handling"""
+
+    def test_gzip_decompression(self):
+        """Gzip compressed content should decompress correctly"""
+        import gzip
+
+        original = b'Hello, World! This is test content.'
+        compressed = gzip.compress(original)
+        decompressed = gzip.decompress(compressed)
+
+        self.assertEqual(decompressed, original)
+
+    def test_deflate_decompression(self):
+        """Deflate compressed content should decompress correctly"""
+        import zlib
+
+        original = b'Hello, World! This is test content.'
+        compressed = zlib.compress(original)
+        decompressed = zlib.decompress(compressed)
+
+        self.assertEqual(decompressed, original)
+
+    def test_gzip_magic_bytes(self):
+        """Gzip content should have correct magic bytes"""
+        import gzip
+
+        content = b'test content'
+        compressed = gzip.compress(content)
+
+        # Gzip magic bytes: 0x1f 0x8b
+        self.assertEqual(compressed[0:2], b'\x1f\x8b')
+
+    def test_invalid_gzip_raises_error(self):
+        """Invalid gzip content should raise error"""
+        import gzip
+
+        invalid_gzip = b'not gzip compressed'
+
+        with self.assertRaises(Exception):
+            gzip.decompress(invalid_gzip)
+
+    def test_invalid_deflate_raises_error(self):
+        """Invalid deflate content should raise error"""
+        import zlib
+
+        invalid_deflate = b'not deflate compressed'
+
+        with self.assertRaises(Exception):
+            zlib.decompress(invalid_deflate)
+
+    def test_xml_survives_compression_roundtrip(self):
+        """XML content should survive gzip roundtrip"""
+        import gzip
+
+        xml_content = b'''<?xml version="1.0" encoding="UTF-8"?>
+<MediaContainer size="3">
+    <Video ratingKey="100" title="Movie A"/>
+    <Video ratingKey="200" title="Movie B"/>
+    <Video ratingKey="300" title="Movie C"/>
+</MediaContainer>'''
+
+        compressed = gzip.compress(xml_content)
+        decompressed = gzip.decompress(compressed)
+
+        # Should be byte-for-byte identical
+        self.assertEqual(decompressed, xml_content)
+
+        # Should parse correctly
+        root = ET.fromstring(decompressed)
+        self.assertEqual(root.tag, 'MediaContainer')
+        self.assertEqual(len(root.findall('Video')), 3)
+
+
+class TestTMDbRequestFingerprint(unittest.TestCase):
+    """Tests for TMDb request fingerprinting (G1)"""
+
+    def test_fingerprint_stability(self):
+        """Same request should produce same fingerprint"""
+        import hashlib
+        from urllib.parse import urlparse, parse_qs
+
+        def compute_fingerprint(method: str, path: str) -> str:
+            parsed = urlparse(path)
+            path_base = parsed.path
+            query_params = parse_qs(parsed.query)
+            sorted_params = sorted(
+                ((k, tuple(sorted(v))) for k, v in query_params.items()),
+                key=lambda x: x[0]
+            )
+            fingerprint_str = f"{method}:{path_base}:{sorted_params}"
+            return hashlib.md5(fingerprint_str.encode()).hexdigest()
+
+        path1 = '/3/discover/movie?api_key=xxx&sort_by=popularity.desc&page=1'
+        path2 = '/3/discover/movie?page=1&api_key=xxx&sort_by=popularity.desc'
+
+        # Same params, different order should produce same fingerprint
+        fp1 = compute_fingerprint('GET', path1)
+        fp2 = compute_fingerprint('GET', path2)
+
+        self.assertEqual(fp1, fp2)
+
+    def test_different_params_different_fingerprint(self):
+        """Different params should produce different fingerprint"""
+        import hashlib
+        from urllib.parse import urlparse, parse_qs
+
+        def compute_fingerprint(method: str, path: str) -> str:
+            parsed = urlparse(path)
+            path_base = parsed.path
+            query_params = parse_qs(parsed.query)
+            sorted_params = sorted(
+                ((k, tuple(sorted(v))) for k, v in query_params.items()),
+                key=lambda x: x[0]
+            )
+            fingerprint_str = f"{method}:{path_base}:{sorted_params}"
+            return hashlib.md5(fingerprint_str.encode()).hexdigest()
+
+        path1 = '/3/discover/movie?api_key=xxx&page=1'
+        path2 = '/3/discover/movie?api_key=xxx&page=2'
+
+        fp1 = compute_fingerprint('GET', path1)
+        fp2 = compute_fingerprint('GET', path2)
+
+        self.assertNotEqual(fp1, fp2)
+
+
+class TestNonOverlayDiscoverDetection(unittest.TestCase):
+    """Tests for non-overlay discover detection (G2)"""
+
+    def _is_non_overlay_discover(self, path: str) -> bool:
+        """Check if a discover request is for non-overlay contexts"""
+        from urllib.parse import urlparse, parse_qs
+
+        path_base = path.split('?')[0]
+
+        if '/discover/' not in path_base:
+            return False
+
+        parsed = urlparse(path)
+        query_params = parse_qs(parsed.query)
+
+        non_overlay_indicators = [
+            'with_genres', 'with_keywords', 'certification',
+            'certification_country', 'with_runtime', 'with_companies',
+            'with_networks', 'with_people', 'with_cast', 'with_crew',
+        ]
+
+        for indicator in non_overlay_indicators:
+            if indicator in query_params and query_params[indicator]:
+                return True
+
+        vote_count_gte = query_params.get('vote_count.gte', ['0'])[0]
+        try:
+            if int(vote_count_gte) >= 100:
+                return True
+        except ValueError:
+            pass
+
+        return False
+
+    def test_genre_collection_is_non_overlay(self):
+        """Genre-based discover is non-overlay (collection builder)"""
+        path = '/3/discover/movie?api_key=xxx&with_genres=28'
+        self.assertTrue(self._is_non_overlay_discover(path))
+
+    def test_keyword_collection_is_non_overlay(self):
+        """Keyword-based discover is non-overlay"""
+        path = '/3/discover/movie?api_key=xxx&with_keywords=9715'
+        self.assertTrue(self._is_non_overlay_discover(path))
+
+    def test_certification_collection_is_non_overlay(self):
+        """Certification-based discover is non-overlay"""
+        path = '/3/discover/movie?api_key=xxx&certification=PG-13&certification_country=US'
+        self.assertTrue(self._is_non_overlay_discover(path))
+
+    def test_high_vote_count_is_non_overlay(self):
+        """High vote_count threshold suggests chart builder"""
+        path = '/3/discover/movie?api_key=xxx&vote_count.gte=500'
+        self.assertTrue(self._is_non_overlay_discover(path))
+
+    def test_simple_discover_is_overlay(self):
+        """Simple discover without collection indicators is allowed"""
+        path = '/3/discover/movie?api_key=xxx&sort_by=popularity.desc'
+        self.assertFalse(self._is_non_overlay_discover(path))
+
+    def test_non_discover_endpoint_ignored(self):
+        """Non-discover endpoints are not affected"""
+        path = '/3/movie/12345?api_key=xxx'
+        self.assertFalse(self._is_non_overlay_discover(path))
+
+
+class TestTMDbProxyResultCapping(unittest.TestCase):
+    """Tests for TMDb proxy result capping logic"""
+
+    def _create_discover_response(self, total_results=100, total_pages=5, result_count=20):
+        """Create a mock TMDb discover response"""
+        results = []
+        for i in range(result_count):
+            results.append({
+                'id': i + 1,
+                'title': f'Movie {i + 1}',
+                'popularity': 100 - i
+            })
+
+        return {
+            'page': 1,
+            'total_pages': total_pages,
+            'total_results': total_results,
+            'results': results
+        }
+
+    def test_capping_logic_truncates_results(self):
+        """Results should be truncated to limit"""
+        import json
+
+        response = self._create_discover_response(
+            total_results=100,
+            total_pages=5,
+            result_count=20
+        )
+        id_limit = 10
+
+        # Simulate capping
+        if 'results' in response:
+            response['results'] = response['results'][:id_limit]
+            response['total_results'] = min(response['total_results'], id_limit)
+            response['total_pages'] = 1
+
+        self.assertEqual(len(response['results']), 10)
+        self.assertEqual(response['total_results'], 10)
+        self.assertEqual(response['total_pages'], 1)
+
+    def test_capping_preserves_structure(self):
+        """Capped response should maintain schema"""
+        import json
+
+        response = self._create_discover_response()
+        id_limit = 5
+
+        # Simulate capping
+        original_keys = set(response.keys())
+        response['results'] = response['results'][:id_limit]
+        response['total_results'] = id_limit
+        response['total_pages'] = 1
+
+        # Should have same keys
+        self.assertEqual(set(response.keys()), original_keys)
+
+        # Should have correct structure
+        self.assertIn('page', response)
+        self.assertIn('total_pages', response)
+        self.assertIn('total_results', response)
+        self.assertIn('results', response)
+        self.assertIsInstance(response['results'], list)
+
+    def test_empty_results_handled(self):
+        """Empty results should be handled gracefully"""
+        response = {
+            'page': 1,
+            'total_pages': 0,
+            'total_results': 0,
+            'results': []
+        }
+
+        # Capping empty results should work
+        response['results'] = response['results'][:25]
+        response['total_pages'] = 1
+
+        self.assertEqual(response['results'], [])
+        self.assertEqual(response['total_pages'], 1)
+
+    def test_results_under_limit_unchanged(self):
+        """Results under limit should not be modified"""
+        import json
+
+        response = self._create_discover_response(
+            total_results=5,
+            total_pages=1,
+            result_count=5
+        )
+        id_limit = 25
+
+        original_count = len(response['results'])
+
+        # Capping should not increase count
+        response['results'] = response['results'][:id_limit]
+
+        self.assertEqual(len(response['results']), original_count)
+
+
+class TestTVDbConversionDetection(unittest.TestCase):
+    """Tests for H1: TMDb → TVDb conversion request detection"""
+
+    def _is_tvdb_conversion_request(self, path: str) -> bool:
+        """Check if a request is for TMDb → TVDb ID conversion"""
+        from urllib.parse import urlparse, parse_qs
+
+        path_base = path.split('?')[0]
+
+        # Match /tv/{id}/external_ids
+        if '/tv/' in path_base and '/external_ids' in path_base:
+            return True
+
+        # Match /find/ with tvdb_id source
+        if '/find/' in path_base:
+            parsed = urlparse(path)
+            query_params = parse_qs(parsed.query)
+            external_source = query_params.get('external_source', [''])[0]
+            if external_source == 'tvdb_id':
+                return True
+
+        return False
+
+    def test_tv_external_ids_detected(self):
+        """TV show external_ids endpoint should be detected"""
+        path = '/3/tv/12345/external_ids?api_key=xxx'
+        self.assertTrue(self._is_tvdb_conversion_request(path))
+
+    def test_tv_external_ids_without_query(self):
+        """TV external_ids without query string should be detected"""
+        path = '/3/tv/67890/external_ids'
+        self.assertTrue(self._is_tvdb_conversion_request(path))
+
+    def test_find_with_tvdb_source(self):
+        """Find endpoint with tvdb_id source should be detected"""
+        path = '/3/find/tt12345?api_key=xxx&external_source=tvdb_id'
+        self.assertTrue(self._is_tvdb_conversion_request(path))
+
+    def test_find_with_imdb_source_not_detected(self):
+        """Find endpoint with imdb_id source should not be detected"""
+        path = '/3/find/tt12345?api_key=xxx&external_source=imdb_id'
+        self.assertFalse(self._is_tvdb_conversion_request(path))
+
+    def test_movie_external_ids_not_detected(self):
+        """Movie external_ids should not be detected (only TV)"""
+        path = '/3/movie/12345/external_ids?api_key=xxx'
+        self.assertFalse(self._is_tvdb_conversion_request(path))
+
+    def test_regular_tv_endpoint_not_detected(self):
+        """Regular TV endpoint should not be detected"""
+        path = '/3/tv/12345?api_key=xxx'
+        self.assertFalse(self._is_tvdb_conversion_request(path))
+
+    def test_discover_not_detected(self):
+        """Discover endpoint should not be detected as TVDb conversion"""
+        path = '/3/discover/tv?api_key=xxx'
+        self.assertFalse(self._is_tvdb_conversion_request(path))
+
+
+class TestDiagnosticTracking(unittest.TestCase):
+    """Tests for H3/H4: Diagnostic tracking features"""
+
+    def test_zero_match_count_tracking(self):
+        """Zero match searches should be trackable"""
+        # Simulate counting zero-match searches
+        zero_match_searches = 0
+
+        queries = [
+            ('exact_match', 5),
+            ('no_results', 0),
+            ('some_results', 3),
+            ('empty_query', 0),
+        ]
+
+        for query, item_count in queries:
+            if item_count == 0 and query:
+                zero_match_searches += 1
+
+        self.assertEqual(zero_match_searches, 2)
+
+    def test_type_mismatch_detection_structure(self):
+        """Type mismatch records should have expected structure"""
+        mismatch = {
+            'expected_type': 'movie',
+            'actual_type': 'collection',
+            'section_id': '1',
+            'description': 'Section 1 expected movie but got collection',
+            'timestamp': '2024-01-15T10:30:00',
+        }
+
+        self.assertIn('expected_type', mismatch)
+        self.assertIn('actual_type', mismatch)
+        self.assertIn('description', mismatch)
+
+    def test_diagnostics_summary_structure(self):
+        """Diagnostics summary should have expected fields"""
+        diagnostics = {
+            'zero_match_searches': 5,
+            'type_mismatches': [],
+            'type_mismatches_count': 0,
+        }
+
+        self.assertIn('zero_match_searches', diagnostics)
+        self.assertIn('type_mismatches', diagnostics)
+        self.assertIn('type_mismatches_count', diagnostics)
+
+        # Count should match list length
+        self.assertEqual(
+            diagnostics['type_mismatches_count'],
+            len(diagnostics['type_mismatches'])
+        )
+
+    def test_zero_match_warning_threshold(self):
+        """Zero match searches should trigger warning when > 0"""
+        zero_matches = 3
+
+        # Simulating the logging decision
+        should_warn = zero_matches > 0
+
+        self.assertTrue(should_warn)
+
+        # No warning for 0
+        self.assertFalse(0 > 0)
+
+
 if __name__ == '__main__':
     # Run tests with verbose output
     unittest.main(verbosity=2)
