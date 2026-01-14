@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getJobManager } from '../jobs/jobManager.js';
-import { profiles } from './configUpload.js';
+import { getProfileStore } from '../storage/profileStore.js';
 import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions.js';
 import { getAvailableTargets } from '../plex/resolveTargets.js';
 
@@ -32,7 +32,8 @@ router.post('/start', async (req: Request, res: Response) => {
 
     // Get config from profile or direct submission
     if (profileId) {
-      const profile = profiles.get(profileId);
+      const store = getProfileStore();
+      const profile = store.get(profileId);
       if (!profile) {
         res.status(404).json({ error: 'Profile not found' });
         return;

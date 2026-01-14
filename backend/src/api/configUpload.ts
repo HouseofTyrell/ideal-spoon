@@ -1,17 +1,7 @@
 import { Router, Request, Response } from 'express';
-import { parseYaml, analyzeConfig, KometaConfig, redactConfig } from '../util/yaml.js';
+import { parseYaml, analyzeConfig, KometaConfig } from '../util/yaml.js';
 import { generateProfileId } from '../util/hash.js';
-
-// In-memory profile storage for v0
-interface Profile {
-  id: string;
-  configYaml: string;
-  analysis: ReturnType<typeof analyzeConfig>;
-  createdAt: string;
-  updatedAt: string;
-}
-
-const profiles = new Map<string, Profile>();
+import { getProfileStore, ProfileData } from '../storage/profileStore.js';
 
 const router = Router();
 
@@ -65,7 +55,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Create profile
     const profileId = generateProfileId();
-    const profile: Profile = {
+    const profile: ProfileData = {
       id: profileId,
       configYaml,
       analysis,
@@ -73,7 +63,8 @@ router.post('/', async (req: Request, res: Response) => {
       updatedAt: new Date().toISOString(),
     };
 
-    profiles.set(profileId, profile);
+    const store = getProfileStore();
+    await store.set(profileId, profile);
 
     // Return analysis (without sensitive data)
     res.json({
@@ -102,7 +93,8 @@ router.post('/', async (req: Request, res: Response) => {
  */
 router.get('/:profileId', (req: Request, res: Response) => {
   const { profileId } = req.params;
-  const profile = profiles.get(profileId);
+  const store = getProfileStore();
+  const profile = store.get(profileId);
 
   if (!profile) {
     res.status(404).json({ error: 'Profile not found' });
@@ -127,9 +119,10 @@ router.get('/:profileId', (req: Request, res: Response) => {
  * PUT /api/config/:profileId
  * Update a profile's config
  */
-router.put('/:profileId', (req: Request, res: Response) => {
+router.put('/:profileId', async (req: Request, res: Response) => {
   const { profileId } = req.params;
-  const profile = profiles.get(profileId);
+  const store = getProfileStore();
+  const profile = store.get(profileId);
 
   if (!profile) {
     res.status(404).json({ error: 'Profile not found' });
@@ -163,12 +156,17 @@ router.put('/:profileId', (req: Request, res: Response) => {
   const analysis = analyzeConfig(config);
 
   // Update profile
-  profile.configYaml = configYaml;
-  profile.analysis = analysis;
-  profile.updatedAt = new Date().toISOString();
+  const updatedProfile: ProfileData = {
+    ...profile,
+    configYaml,
+    analysis,
+    updatedAt: new Date().toISOString(),
+  };
+
+  await store.set(profileId, updatedProfile);
 
   res.json({
-    profileId: profile.id,
+    profileId: updatedProfile.id,
     plexUrl: analysis.plexUrl,
     tokenPresent: analysis.tokenPresent,
     assetDirectories: analysis.assetDirectories,
@@ -176,7 +174,7 @@ router.put('/:profileId', (req: Request, res: Response) => {
     libraryNames: analysis.libraryNames,
     warnings: analysis.warnings,
     overlayYaml: analysis.overlayYaml,
-    updatedAt: profile.updatedAt,
+    updatedAt: updatedProfile.updatedAt,
   });
 });
 
@@ -184,15 +182,16 @@ router.put('/:profileId', (req: Request, res: Response) => {
  * DELETE /api/config/:profileId
  * Delete a profile
  */
-router.delete('/:profileId', (req: Request, res: Response) => {
+router.delete('/:profileId', async (req: Request, res: Response) => {
   const { profileId } = req.params;
+  const store = getProfileStore();
 
-  if (!profiles.has(profileId)) {
+  if (!store.has(profileId)) {
     res.status(404).json({ error: 'Profile not found' });
     return;
   }
 
-  profiles.delete(profileId);
+  await store.delete(profileId);
   res.json({ success: true });
 });
 
@@ -202,7 +201,8 @@ router.delete('/:profileId', (req: Request, res: Response) => {
  */
 router.get('/:profileId/raw', (req: Request, res: Response) => {
   const { profileId } = req.params;
-  const profile = profiles.get(profileId);
+  const store = getProfileStore();
+  const profile = store.get(profileId);
 
   if (!profile) {
     res.status(404).json({ error: 'Profile not found' });
@@ -215,6 +215,4 @@ router.get('/:profileId/raw', (req: Request, res: Response) => {
   });
 });
 
-// Export the profiles map for use by other modules
-export { profiles };
 export default router;

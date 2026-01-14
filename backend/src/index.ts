@@ -10,6 +10,7 @@ import systemControlRouter from './api/systemControl.js';
 import { ensureDir } from './util/safeFs.js';
 import { getJobsBasePath, getFontsPath } from './jobs/paths.js';
 import { DEFAULT_PORT, DEFAULT_HOST, DEFAULT_CORS_ORIGIN } from './constants.js';
+import { initializeProfileStore } from './storage/profileStore.js';
 
 // Load environment variables from process.env (with constants as defaults)
 const PORT = parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
@@ -27,6 +28,9 @@ async function main() {
   console.log(`Fonts directory: ${fontsPath}`);
 
   await ensureDir(jobsPath);
+
+  // Initialize profile store (loads saved profiles from disk)
+  await initializeProfileStore();
 
   // Create Express app
   const app = express();
