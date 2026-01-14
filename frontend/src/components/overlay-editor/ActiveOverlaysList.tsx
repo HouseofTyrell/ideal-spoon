@@ -140,11 +140,78 @@ function ActiveOverlaysList({
     )
   }
 
+  const enabledCount = overlays.filter((o) => o.enabled).length
+  const allEnabled = overlays.length > 0 && enabledCount === overlays.length
+  const noneEnabled = enabledCount === 0
+
+  const handleEnableAll = () => {
+    if (disabled) return
+    const updatedOverlays = overlays.map((o) => ({ ...o, enabled: true }))
+    // Recalculate weights
+    const reweighted = updatedOverlays.map((o, i) => ({
+      ...o,
+      grouping: { ...o.grouping, weight: (updatedOverlays.length - i) * 10 },
+    }))
+    onReorder(reweighted)
+  }
+
+  const handleDisableAll = () => {
+    if (disabled) return
+    const updatedOverlays = overlays.map((o) => ({ ...o, enabled: false }))
+    const reweighted = updatedOverlays.map((o, i) => ({
+      ...o,
+      grouping: { ...o.grouping, weight: (updatedOverlays.length - i) * 10 },
+    }))
+    onReorder(reweighted)
+  }
+
+  const handleToggleAll = () => {
+    if (allEnabled) {
+      handleDisableAll()
+    } else {
+      handleEnableAll()
+    }
+  }
+
   return (
     <div className="active-overlays">
       <div className="list-header">
-        <span className="header-title">Active Overlays</span>
-        <span className="header-count">{overlays.filter((o) => o.enabled).length} active</span>
+        <div className="header-left">
+          <input
+            type="checkbox"
+            checked={allEnabled}
+            ref={(el) => {
+              if (el) el.indeterminate = !allEnabled && !noneEnabled
+            }}
+            onChange={handleToggleAll}
+            disabled={disabled || overlays.length === 0}
+            title={allEnabled ? 'Disable all' : 'Enable all'}
+          />
+          <span className="header-title">Active Overlays</span>
+        </div>
+        <div className="header-right">
+          <span className="header-count">{enabledCount}/{overlays.length}</span>
+          <div className="bulk-actions">
+            <button
+              type="button"
+              className="bulk-btn"
+              onClick={handleEnableAll}
+              disabled={disabled || allEnabled}
+              title="Enable all overlays"
+            >
+              All On
+            </button>
+            <button
+              type="button"
+              className="bulk-btn"
+              onClick={handleDisableAll}
+              disabled={disabled || noneEnabled}
+              title="Disable all overlays"
+            >
+              All Off
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="overlay-list">
@@ -260,6 +327,24 @@ function ActiveOverlaysList({
           border-bottom: 1px solid var(--border-color);
         }
 
+        .header-left {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+
+        .header-left input[type="checkbox"] {
+          width: 16px;
+          height: 16px;
+          cursor: pointer;
+        }
+
+        .header-right {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+        }
+
         .header-title {
           font-size: 0.875rem;
           font-weight: 600;
@@ -268,6 +353,33 @@ function ActiveOverlaysList({
         .header-count {
           font-size: 0.75rem;
           color: var(--text-muted);
+        }
+
+        .bulk-actions {
+          display: flex;
+          gap: 0.25rem;
+        }
+
+        .bulk-btn {
+          padding: 0.25rem 0.5rem;
+          font-size: 0.625rem;
+          font-weight: 500;
+          background-color: var(--bg-tertiary);
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-sm);
+          color: var(--text-secondary);
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+
+        .bulk-btn:hover:not(:disabled) {
+          background-color: var(--bg-primary);
+          color: var(--text-primary);
+        }
+
+        .bulk-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
         }
 
         .overlay-list {
