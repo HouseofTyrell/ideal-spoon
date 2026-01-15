@@ -504,44 +504,23 @@ def build_synthetic_library_sections_xml(targets: List[Dict[str, Any]]) -> bytes
     """
     Build synthetic /library/sections XML response.
 
-    Creates minimal library sections based on target types.
+    Creates minimal library sections for both Movies and TV Shows.
+    This ensures Kometa configs with both library types work correctly,
+    even if targets only include one type (e.g., only movies).
 
     Args:
-        targets: List of preview targets
+        targets: List of preview targets (not used for section determination anymore)
 
     Returns:
         XML bytes for MediaContainer with Directory elements for sections
     """
-    # Determine which section types we need based on targets
-    has_movies = any(t.get('type') in ('movie', 'movies') for t in targets)
-    has_shows = any(t.get('type') in ('show', 'shows', 'series', 'season', 'episode') for t in targets)
-
-    sections = []
-
-    if has_movies:
-        sections.append({
-            'key': '1',
-            'type': 'movie',
-            'title': 'Movies',
-            'agent': 'tv.plex.agents.movie',
-            'scanner': 'Plex Movie',
-        })
-
-    if has_shows:
-        sections.append({
-            'key': '2',
-            'type': 'show',
-            'title': 'TV Shows',
-            'agent': 'tv.plex.agents.series',
-            'scanner': 'Plex TV Series',
-        })
-
-    # If no types detected, create both sections as fallback
-    if not sections:
-        sections = [
-            {'key': '1', 'type': 'movie', 'title': 'Movies', 'agent': 'tv.plex.agents.movie', 'scanner': 'Plex Movie'},
-            {'key': '2', 'type': 'show', 'title': 'TV Shows', 'agent': 'tv.plex.agents.series', 'scanner': 'Plex TV Series'},
-        ]
+    # Always return both Movies and TV Shows sections
+    # This ensures Kometa configs that define both libraries work correctly,
+    # even when preview targets only include one type
+    sections = [
+        {'key': '1', 'type': 'movie', 'title': 'Movies', 'agent': 'tv.plex.agents.movie', 'scanner': 'Plex Movie'},
+        {'key': '2', 'type': 'show', 'title': 'TV Shows', 'agent': 'tv.plex.agents.series', 'scanner': 'Plex TV Series'},
+    ]
 
     root = ET.Element('MediaContainer', {
         'size': str(len(sections)),
