@@ -137,11 +137,11 @@ function buildKometaConfig(
   };
 
   // Copy libraries with overlay definitions (filtered by test options)
-  // SKIP this entirely if manual mode is enabled - manual mode bypasses Kometa's builder
-  // and uses instant_compositor directly, so library definitions are unnecessary and slow
-  const isManualMode = testOptions?.manualBuilderConfig?.enabled === true;
+  // By default, skip library processing to use fast instant compositor mode.
+  // Only include libraries if user explicitly opts into full Kometa builder mode.
+  const useFullBuilder = testOptions?.useFullKometaBuilder === true;
 
-  if (!isManualMode && originalConfig.libraries) {
+  if (useFullBuilder && originalConfig.libraries) {
     const libraries: Record<string, unknown> = {};
 
     for (const [libName, libConfig] of Object.entries(originalConfig.libraries)) {
@@ -220,23 +220,26 @@ function buildKometaConfig(
     }),
   };
 
-  // Add manual builder config if enabled - this tells the renderer to skip Kometa
-  // and use instant_compositor directly with the specified overlays
-  if (testOptions?.manualBuilderConfig?.enabled) {
+  // Enable manual mode by default (fast instant compositor)
+  // Only disable if user explicitly opts into full Kometa builder mode
+  // Manual mode tells the renderer to skip Kometa and use instant_compositor directly
+  if (!useFullBuilder) {
     previewSection.manual_mode = true;
+    // Use manual builder config if provided, otherwise enable all overlays by default
+    const manualConfig = testOptions?.manualBuilderConfig;
     previewSection.manual_overlays = {
-      resolution: testOptions.manualBuilderConfig.resolution ?? false,
-      audio_codec: testOptions.manualBuilderConfig.audioCodec ?? false,
-      hdr: testOptions.manualBuilderConfig.hdr ?? false,
-      ratings: testOptions.manualBuilderConfig.ratings ?? false,
-      streaming: testOptions.manualBuilderConfig.streaming ?? false,
-      network: testOptions.manualBuilderConfig.network ?? false,
-      studio: testOptions.manualBuilderConfig.studio ?? false,
-      status: testOptions.manualBuilderConfig.status ?? false,
+      resolution: manualConfig?.resolution ?? true,
+      audio_codec: manualConfig?.audioCodec ?? true,
+      hdr: manualConfig?.hdr ?? true,
+      ratings: manualConfig?.ratings ?? true,
+      streaming: manualConfig?.streaming ?? true,
+      network: manualConfig?.network ?? true,
+      studio: manualConfig?.studio ?? true,
+      status: manualConfig?.status ?? true,
       ribbon: {
-        imdb_top_250: testOptions.manualBuilderConfig.ribbon?.imdbTop250 ?? false,
-        imdb_lowest: testOptions.manualBuilderConfig.ribbon?.imdbLowest ?? false,
-        rt_certified_fresh: testOptions.manualBuilderConfig.ribbon?.rtCertifiedFresh ?? false,
+        imdb_top_250: manualConfig?.ribbon?.imdbTop250 ?? true,
+        imdb_lowest: manualConfig?.ribbon?.imdbLowest ?? false,
+        rt_certified_fresh: manualConfig?.ribbon?.rtCertifiedFresh ?? true,
       },
     };
   }
