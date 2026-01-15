@@ -8,7 +8,9 @@ FROM kometateam/kometa:${KOMETA_IMAGE_TAG}
 USER root
 
 # Create preview directories
-RUN mkdir -p /preview /jobs
+# /preview/assets is the overlay asset cache - mount as a volume to persist between restarts
+# Example: docker run -v kometa-assets:/preview/assets ...
+RUN mkdir -p /preview /preview/assets /jobs
 
 # Copy all preview/renderer Python modules
 COPY *.py /preview/
@@ -16,6 +18,10 @@ RUN chmod +x /preview/preview_entrypoint.py
 
 # Set working directory
 WORKDIR /
+
+# Declare volume for asset cache persistence
+# Users should mount a named volume or bind mount to persist cached overlay assets
+VOLUME ["/preview/assets"]
 
 # Override entrypoint for preview mode
 ENTRYPOINT ["python3", "/preview/preview_entrypoint.py"]
