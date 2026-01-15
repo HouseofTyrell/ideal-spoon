@@ -10,6 +10,50 @@ export interface MediaTypeFilters {
   episodes: boolean;
 }
 
+/**
+ * Manual builder configuration for fast preview rendering.
+ *
+ * When enabled, bypasses Kometa's external builders (IMDb, TMDb, Trakt, etc.)
+ * and directly applies selected overlays to preview targets using their
+ * hardcoded metadata. This reduces preview time from 30-60+ seconds to ~2 seconds.
+ */
+export interface ManualBuilderConfig {
+  enabled: boolean;
+  resolution?: boolean;
+  audioCodec?: boolean;
+  hdr?: boolean;
+  ratings?: boolean;
+  streaming?: boolean;
+  network?: boolean;
+  studio?: boolean;
+  status?: boolean;
+  ribbon?: {
+    imdbTop250?: boolean;
+    imdbLowest?: boolean;
+    rtCertifiedFresh?: boolean;
+  };
+}
+
+/**
+ * Default manual builder configuration - disabled with all overlays off
+ */
+export const DEFAULT_MANUAL_BUILDER_CONFIG: ManualBuilderConfig = {
+  enabled: false,
+  resolution: false,
+  audioCodec: false,
+  hdr: false,
+  ratings: false,
+  streaming: false,
+  network: false,
+  studio: false,
+  status: false,
+  ribbon: {
+    imdbTop250: false,
+    imdbLowest: false,
+    rtCertifiedFresh: false,
+  },
+};
+
 export interface TestOptions {
   /**
    * IDs of specific targets to include (from PREVIEW_TARGETS)
@@ -33,6 +77,12 @@ export interface TestOptions {
    * Empty array means "all overlays"
    */
   selectedOverlays: string[];
+
+  /**
+   * Manual builder configuration for fast preview mode.
+   * When enabled, applies overlays directly without external API calls.
+   */
+  manualBuilderConfig?: ManualBuilderConfig;
 }
 
 /**
@@ -57,6 +107,7 @@ export const DEFAULT_TEST_OPTIONS: TestOptions = {
   },
   selectedLibraries: [],
   selectedOverlays: [],
+  manualBuilderConfig: undefined,
 };
 
 /**
@@ -75,6 +126,9 @@ export function hasActiveFilters(options: TestOptions): boolean {
   if (options.mediaTypes.seasons !== defaults.mediaTypes.seasons) return true;
   if (options.mediaTypes.episodes !== defaults.mediaTypes.episodes) return true;
 
+  // Check if manual builder config is enabled
+  if (options.manualBuilderConfig?.enabled) return true;
+
   return false;
 }
 
@@ -83,6 +137,11 @@ export function hasActiveFilters(options: TestOptions): boolean {
  */
 export function getFilterSummary(options: TestOptions): string {
   const parts: string[] = [];
+
+  // Check if manual builder mode is enabled
+  if (options.manualBuilderConfig?.enabled) {
+    parts.push('Manual Mode');
+  }
 
   if (options.selectedTargets.length > 0) {
     parts.push(`${options.selectedTargets.length} target(s)`);

@@ -2,6 +2,8 @@ import { useState, useCallback } from 'react'
 import {
   TestOptions,
   DEFAULT_TEST_OPTIONS,
+  DEFAULT_MANUAL_BUILDER_CONFIG,
+  ManualBuilderConfig,
   hasActiveFilters,
   getFilterSummary,
 } from '../types/testOptions'
@@ -67,6 +69,64 @@ function TestOptionsPanel({
         ? options.selectedOverlays.filter((o) => o !== overlay)
         : [...options.selectedOverlays, overlay]
       onChange({ ...options, selectedOverlays: newOverlays })
+    },
+    [options, onChange]
+  )
+
+  const handleManualModeToggle = useCallback(() => {
+    const currentConfig = options.manualBuilderConfig
+    if (currentConfig?.enabled) {
+      // Disable manual mode
+      onChange({ ...options, manualBuilderConfig: undefined })
+    } else {
+      // Enable manual mode with common overlays on by default
+      // Uses Kometa's Default-Images PNG assets for production-quality previews
+      onChange({
+        ...options,
+        manualBuilderConfig: {
+          ...DEFAULT_MANUAL_BUILDER_CONFIG,
+          enabled: true,
+          resolution: true,
+          audioCodec: true,
+          hdr: true,
+          streaming: true,
+          network: true,
+          studio: true,
+          ratings: true,
+          status: true,
+          ribbon: { imdbTop250: true, imdbLowest: false, rtCertifiedFresh: true },
+        },
+      })
+    }
+  }, [options, onChange])
+
+  const handleManualOverlayToggle = useCallback(
+    (key: keyof ManualBuilderConfig) => {
+      if (!options.manualBuilderConfig) return
+      onChange({
+        ...options,
+        manualBuilderConfig: {
+          ...options.manualBuilderConfig,
+          [key]: !options.manualBuilderConfig[key],
+        },
+      })
+    },
+    [options, onChange]
+  )
+
+  const handleRibbonToggle = useCallback(
+    (ribbonKey: 'imdbTop250' | 'imdbLowest' | 'rtCertifiedFresh') => {
+      if (!options.manualBuilderConfig?.ribbon) return
+      onChange({
+        ...options,
+        manualBuilderConfig: {
+          ...options.manualBuilderConfig,
+          ribbon: {
+            ...options.manualBuilderConfig.ribbon,
+            [ribbonKey]: !options.manualBuilderConfig.ribbon[ribbonKey],
+          },
+        },
+      })
     },
     [options, onChange]
   )
@@ -155,6 +215,139 @@ function TestOptionsPanel({
                 <span>Episodes</span>
               </label>
             </div>
+          </div>
+
+          {/* Manual Builder Mode */}
+          <div className="options-section manual-mode-section">
+            <div className="section-header">
+              <h4 className="section-title">Fast Preview Mode</h4>
+              <label className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={options.manualBuilderConfig?.enabled ?? false}
+                  onChange={handleManualModeToggle}
+                  disabled={disabled}
+                />
+                <span className="toggle-slider"></span>
+              </label>
+            </div>
+            <p className="section-hint">
+              Skip external API calls (IMDb, TMDb, Trakt). Uses Kometa's PNG overlay assets for production-quality instant previews.
+            </p>
+
+            {options.manualBuilderConfig?.enabled && (
+              <div className="manual-overlays-grid">
+                <div className="overlay-group">
+                  <h5 className="group-title">Quality Badges</h5>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.resolution ?? false}
+                      onChange={() => handleManualOverlayToggle('resolution')}
+                      disabled={disabled}
+                    />
+                    <span>Resolution (4K, 1080p)</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.audioCodec ?? false}
+                      onChange={() => handleManualOverlayToggle('audioCodec')}
+                      disabled={disabled}
+                    />
+                    <span>Audio Codec (Atmos, DTS-HD)</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.hdr ?? false}
+                      onChange={() => handleManualOverlayToggle('hdr')}
+                      disabled={disabled}
+                    />
+                    <span>HDR / Dolby Vision</span>
+                  </label>
+                </div>
+
+                <div className="overlay-group">
+                  <h5 className="group-title">Streaming & Providers</h5>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.streaming ?? false}
+                      onChange={() => handleManualOverlayToggle('streaming')}
+                      disabled={disabled}
+                    />
+                    <span>Streaming Services (Netflix, Max)</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.network ?? false}
+                      onChange={() => handleManualOverlayToggle('network')}
+                      disabled={disabled}
+                    />
+                    <span>TV Network (AMC, HBO)</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.studio ?? false}
+                      onChange={() => handleManualOverlayToggle('studio')}
+                      disabled={disabled}
+                    />
+                    <span>Studio (Warner Bros., Legendary)</span>
+                  </label>
+                </div>
+
+                <div className="overlay-group">
+                  <h5 className="group-title">Ratings</h5>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.ratings ?? false}
+                      onChange={() => handleManualOverlayToggle('ratings')}
+                      disabled={disabled}
+                    />
+                    <span>Ratings (IMDb, TMDb, RT)</span>
+                  </label>
+                </div>
+
+                <div className="overlay-group">
+                  <h5 className="group-title">Awards & Ribbons</h5>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.ribbon?.imdbTop250 ?? false}
+                      onChange={() => handleRibbonToggle('imdbTop250')}
+                      disabled={disabled}
+                    />
+                    <span>IMDb Top 250</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.ribbon?.rtCertifiedFresh ?? false}
+                      onChange={() => handleRibbonToggle('rtCertifiedFresh')}
+                      disabled={disabled}
+                    />
+                    <span>RT Certified Fresh</span>
+                  </label>
+                </div>
+
+                <div className="overlay-group">
+                  <h5 className="group-title">TV Shows</h5>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.manualBuilderConfig?.status ?? false}
+                      onChange={() => handleManualOverlayToggle('status')}
+                      disabled={disabled}
+                    />
+                    <span>Show Status (Ended, Returning)</span>
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Target Selection */}
@@ -448,6 +641,91 @@ function TestOptionsPanel({
         .options-footer {
           border-top: 1px solid var(--border-color);
           padding-top: 1rem;
+        }
+
+        /* Manual Mode Section */
+        .manual-mode-section {
+          background-color: var(--bg-tertiary);
+          padding: 0.75rem;
+          border-radius: var(--radius-md);
+          border: 1px solid var(--border-color);
+        }
+
+        .toggle-switch {
+          position: relative;
+          display: inline-block;
+          width: 44px;
+          height: 24px;
+        }
+
+        .toggle-switch input {
+          opacity: 0;
+          width: 0;
+          height: 0;
+        }
+
+        .toggle-slider {
+          position: absolute;
+          cursor: pointer;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background-color: var(--bg-secondary);
+          transition: 0.3s;
+          border-radius: 24px;
+          border: 1px solid var(--border-color);
+        }
+
+        .toggle-slider:before {
+          position: absolute;
+          content: "";
+          height: 18px;
+          width: 18px;
+          left: 2px;
+          bottom: 2px;
+          background-color: var(--text-muted);
+          transition: 0.3s;
+          border-radius: 50%;
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+          background-color: var(--primary);
+          border-color: var(--primary);
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+          transform: translateX(20px);
+          background-color: white;
+        }
+
+        .toggle-switch input:disabled + .toggle-slider {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .manual-overlays-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 1rem;
+          margin-top: 0.75rem;
+          padding-top: 0.75rem;
+          border-top: 1px solid var(--border-color);
+        }
+
+        .overlay-group {
+          display: flex;
+          flex-direction: column;
+          gap: 0.375rem;
+        }
+
+        .group-title {
+          margin: 0 0 0.25rem 0;
+          font-size: 0.75rem;
+          font-weight: 600;
+          color: var(--text-muted);
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
         }
       `}</style>
     </div>

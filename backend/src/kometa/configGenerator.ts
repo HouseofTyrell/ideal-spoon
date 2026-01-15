@@ -180,7 +180,7 @@ function buildKometaConfig(
   // IMPORTANT: ratingKey is required for deterministic output mapping
   // Parent ratingKeys are required for mock library mode to return synthetic children
   // Metadata is used for instant overlay application without TMDb queries
-  config.preview = {
+  const previewSection: Record<string, unknown> = {
     mode: 'write_blocked',
     targets: targets.map((t) => {
       const target: Record<string, unknown> = {
@@ -212,6 +212,29 @@ function buildKometaConfig(
       return target;
     }),
   };
+
+  // Add manual builder config if enabled - this tells the renderer to skip Kometa
+  // and use instant_compositor directly with the specified overlays
+  if (testOptions?.manualBuilderConfig?.enabled) {
+    previewSection.manual_mode = true;
+    previewSection.manual_overlays = {
+      resolution: testOptions.manualBuilderConfig.resolution ?? false,
+      audio_codec: testOptions.manualBuilderConfig.audioCodec ?? false,
+      hdr: testOptions.manualBuilderConfig.hdr ?? false,
+      ratings: testOptions.manualBuilderConfig.ratings ?? false,
+      streaming: testOptions.manualBuilderConfig.streaming ?? false,
+      network: testOptions.manualBuilderConfig.network ?? false,
+      studio: testOptions.manualBuilderConfig.studio ?? false,
+      status: testOptions.manualBuilderConfig.status ?? false,
+      ribbon: {
+        imdb_top_250: testOptions.manualBuilderConfig.ribbon?.imdbTop250 ?? false,
+        imdb_lowest: testOptions.manualBuilderConfig.ribbon?.imdbLowest ?? false,
+        rt_certified_fresh: testOptions.manualBuilderConfig.ribbon?.rtCertifiedFresh ?? false,
+      },
+    };
+  }
+
+  config.preview = previewSection;
 
   return config;
 }

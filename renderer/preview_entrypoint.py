@@ -133,6 +133,64 @@ def main():
 
     summary_path = output_dir / 'summary.json'
 
+    # ================================================================
+    # MANUAL MODE CHECK: Skip Kometa entirely for instant preview
+    # When manual_mode is enabled, use instant_compositor directly
+    # with user-selected overlays. This bypasses all external API calls.
+    # ================================================================
+    preview_data = preview_config.get('preview', {})
+    if preview_data.get('manual_mode'):
+        logger.info("=" * 60)
+        logger.info("MANUAL MODE: Fast preview with user-selected overlays")
+        logger.info("Skipping Kometa - using instant compositor only")
+        logger.info("=" * 60)
+
+        manual_overlays = preview_data.get('manual_overlays', {})
+        logger.info(f"Selected overlays: {[k for k, v in manual_overlays.items() if v]}")
+
+        try:
+            from instant_compositor import run_manual_preview
+            result = run_manual_preview(job_path, manual_overlays)
+
+            if result == 0:
+                # Copy draft outputs to final output location
+                import shutil
+                draft_dir = output_dir / 'draft'
+                targets = preview_data.get('targets', [])
+                exported_files = {}
+
+                for draft_file in draft_dir.glob('*_draft.png'):
+                    target_id = draft_file.stem.replace('_draft', '')
+                    final_file = output_dir / f"{target_id}_after.png"
+                    shutil.copy(draft_file, final_file)
+                    exported_files[target_id] = str(final_file)
+                    logger.info(f"  Manual mode output: {final_file.name}")
+
+                # Write success summary
+                summary = {
+                    'timestamp': datetime.now().isoformat(),
+                    'success': True,
+                    'cached': False,
+                    'manual_mode': True,
+                    'manual_overlays': manual_overlays,
+                    'exported_files': exported_files,
+                    'output_files': [f.name for f in output_dir.glob('*_after.*')],
+                }
+                with open(summary_path, 'w') as f:
+                    json.dump(summary, f, indent=2)
+
+                logger.info(f"Manual mode complete: {len(exported_files)} images generated")
+                sys.exit(0)
+            else:
+                logger.warning("Manual mode had issues - falling back to full render")
+
+        except ImportError as e:
+            logger.warning(f"Instant compositor not available: {e}")
+            logger.warning("Falling back to full Kometa render")
+        except Exception as e:
+            logger.warning(f"Manual mode failed: {e}")
+            logger.warning("Falling back to full Kometa render")
+
     # Log configured Plex URL
     configured_plex_url = preview_config.get('plex', {}).get('url', '')
     logger.info(f"Configured Plex URL (preview config): {configured_plex_url}")
