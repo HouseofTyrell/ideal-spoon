@@ -206,12 +206,24 @@ if (-not (Test-Path $interFontPath)) {
 # ============================================================
 Write-Info "Building Docker images (this may take a few minutes on first run)..."
 
-docker-compose build
+# Build renderer with fresh layers to ensure latest code is always used
+# This is critical for preview accuracy - stale renderer code = wrong overlays
+Write-Info "Building renderer image (forcing fresh build to ensure latest code)..."
+docker-compose build --no-cache --pull kometa-renderer-build
 if ($LASTEXITCODE -ne 0) {
-    Write-Err "docker-compose build failed"
+    Write-Err "Renderer image build failed"
     exit 1
 }
-Write-Success "Docker images built successfully"
+Write-Success "Renderer image built successfully"
+
+# Build other services (can use cache since they change less frequently)
+Write-Info "Building backend and frontend services..."
+docker-compose build backend frontend
+if ($LASTEXITCODE -ne 0) {
+    Write-Err "Backend/frontend build failed"
+    exit 1
+}
+Write-Success "All Docker images built successfully"
 
 Write-Info "Starting services..."
 

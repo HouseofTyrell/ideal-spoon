@@ -165,12 +165,24 @@ fi
 # ============================================================
 info "Building Docker images (this may take a few minutes on first run)..."
 
-$COMPOSE_CMD build
+# Build renderer with fresh layers to ensure latest code is always used
+# This is critical for preview accuracy - stale renderer code = wrong overlays
+info "Building renderer image (forcing fresh build to ensure latest code)..."
+$COMPOSE_CMD build --no-cache --pull kometa-renderer-build
 if [ $? -ne 0 ]; then
-    err "docker-compose build failed"
+    err "Renderer image build failed"
     exit 1
 fi
-success "Docker images built successfully"
+success "Renderer image built successfully"
+
+# Build other services (can use cache since they change less frequently)
+info "Building backend and frontend services..."
+$COMPOSE_CMD build backend frontend
+if [ $? -ne 0 ]; then
+    err "Backend/frontend build failed"
+    exit 1
+fi
+success "All Docker images built successfully"
 
 info "Starting services..."
 
