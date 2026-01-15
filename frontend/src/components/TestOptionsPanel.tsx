@@ -79,7 +79,8 @@ function TestOptionsPanel({
       // Disable manual mode
       onChange({ ...options, manualBuilderConfig: undefined })
     } else {
-      // Enable manual mode with defaults (all overlays on for quick preview)
+      // Enable manual mode with implemented overlays on by default
+      // Note: Only includes overlays that instant_compositor actually supports
       onChange({
         ...options,
         manualBuilderConfig: {
@@ -88,6 +89,7 @@ function TestOptionsPanel({
           resolution: true,
           audioCodec: true,
           hdr: true,
+          status: true,
           ribbon: { imdbTop250: true, imdbLowest: false, rtCertifiedFresh: false },
         },
       })
@@ -236,7 +238,7 @@ function TestOptionsPanel({
                   <label className="checkbox-item">
                     <input
                       type="checkbox"
-                      checked={options.manualBuilderConfig.resolution ?? false}
+                      checked={options.manualBuilderConfig?.resolution ?? false}
                       onChange={() => handleManualOverlayToggle('resolution')}
                       disabled={disabled}
                     />
@@ -245,7 +247,7 @@ function TestOptionsPanel({
                   <label className="checkbox-item">
                     <input
                       type="checkbox"
-                      checked={options.manualBuilderConfig.audioCodec ?? false}
+                      checked={options.manualBuilderConfig?.audioCodec ?? false}
                       onChange={() => handleManualOverlayToggle('audioCodec')}
                       disabled={disabled}
                     />
@@ -254,7 +256,7 @@ function TestOptionsPanel({
                   <label className="checkbox-item">
                     <input
                       type="checkbox"
-                      checked={options.manualBuilderConfig.hdr ?? false}
+                      checked={options.manualBuilderConfig?.hdr ?? false}
                       onChange={() => handleManualOverlayToggle('hdr')}
                       disabled={disabled}
                     />
@@ -267,60 +269,20 @@ function TestOptionsPanel({
                   <label className="checkbox-item">
                     <input
                       type="checkbox"
-                      checked={options.manualBuilderConfig.ribbon?.imdbTop250 ?? false}
+                      checked={options.manualBuilderConfig?.ribbon?.imdbTop250 ?? false}
                       onChange={() => handleRibbonToggle('imdbTop250')}
                       disabled={disabled}
                     />
                     <span>IMDb Top 250</span>
                   </label>
-                  <label className="checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={options.manualBuilderConfig.ribbon?.rtCertifiedFresh ?? false}
-                      onChange={() => handleRibbonToggle('rtCertifiedFresh')}
-                      disabled={disabled}
-                    />
-                    <span>RT Certified Fresh</span>
-                  </label>
                 </div>
 
                 <div className="overlay-group">
-                  <h5 className="group-title">Ratings</h5>
+                  <h5 className="group-title">TV Shows</h5>
                   <label className="checkbox-item">
                     <input
                       type="checkbox"
-                      checked={options.manualBuilderConfig.ratings ?? false}
-                      onChange={() => handleManualOverlayToggle('ratings')}
-                      disabled={disabled}
-                    />
-                    <span>Show Ratings (IMDb, TMDb, RT)</span>
-                  </label>
-                </div>
-
-                <div className="overlay-group">
-                  <h5 className="group-title">Services & Status</h5>
-                  <label className="checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={options.manualBuilderConfig.streaming ?? false}
-                      onChange={() => handleManualOverlayToggle('streaming')}
-                      disabled={disabled}
-                    />
-                    <span>Streaming Services</span>
-                  </label>
-                  <label className="checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={options.manualBuilderConfig.network ?? false}
-                      onChange={() => handleManualOverlayToggle('network')}
-                      disabled={disabled}
-                    />
-                    <span>TV Networks</span>
-                  </label>
-                  <label className="checkbox-item">
-                    <input
-                      type="checkbox"
-                      checked={options.manualBuilderConfig.status ?? false}
+                      checked={options.manualBuilderConfig?.status ?? false}
                       onChange={() => handleManualOverlayToggle('status')}
                       disabled={disabled}
                     />
