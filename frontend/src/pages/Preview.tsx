@@ -7,6 +7,10 @@ import {
   getJobStatus,
   getJobArtifacts,
   subscribeToJobEvents,
+  getActiveJob,
+  pauseJob,
+  resumeJob,
+  cancelJob,
   JobStatus,
   JobArtifacts,
   JobEvent,
@@ -33,7 +37,9 @@ function PreviewPage({
   const [logs, setLogs] = useState<JobEvent[]>([])
   const [error, setError] = useState<string | null>(null)
   const [isRunning, setIsRunning] = useState(false)
+  const [isPaused, setIsPaused] = useState(false)
   const [testOptions, setTestOptions] = useState<TestOptions>(DEFAULT_TEST_OPTIONS)
+  const [reconnecting, setReconnecting] = useState(false)
 
   // Calculate which targets to display based on test options
   const visibleTargets = useMemo(() => {
@@ -88,6 +94,73 @@ function PreviewPage({
     }
   }
 
+  const handlePause = async () => {
+    if (!jobId) return
+    try {
+      await pauseJob(jobId)
+      setIsPaused(true)
+      setLogs((prev) => [...prev, { type: 'log', timestamp: new Date().toISOString(), message: 'Job paused' }])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to pause job')
+    }
+  }
+
+  const handleResume = async () => {
+    if (!jobId) return
+    try {
+      await resumeJob(jobId)
+      setIsPaused(false)
+      setLogs((prev) => [...prev, { type: 'log', timestamp: new Date().toISOString(), message: 'Job resumed' }])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resume job')
+    }
+  }
+
+  const handleStop = async () => {
+    if (!jobId) return
+    try {
+      await cancelJob(jobId)
+      setIsRunning(false)
+      setIsPaused(false)
+      setLogs((prev) => [...prev, { type: 'log', timestamp: new Date().toISOString(), message: 'Job stopped' }])
+      // Fetch final status
+      const statusResult = await getJobStatus(jobId)
+      setStatus(statusResult)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to stop job')
+    }
+  }
+
+  // Check for active job on mount (allows frontend to reconnect to running jobs)
+  useEffect(() => {
+    const checkActiveJob = async () => {
+      try {
+        setReconnecting(true)
+        const result = await getActiveJob()
+        if (result.hasActiveJob && result.job) {
+          setJobId(result.job.jobId)
+          setIsRunning(result.job.status === 'running')
+          setIsPaused(result.job.status === 'paused')
+          setLogs([{ type: 'log', timestamp: new Date().toISOString(), message: `Reconnected to job: ${result.job.jobId}` }])
+
+          // Fetch current status and artifacts
+          const [statusResult, artifactsResult] = await Promise.all([
+            getJobStatus(result.job.jobId),
+            getJobArtifacts(result.job.jobId),
+          ])
+          setStatus(statusResult)
+          setArtifacts(artifactsResult)
+        }
+      } catch (err) {
+        console.error('Failed to check for active job:', err)
+      } finally {
+        setReconnecting(false)
+      }
+    }
+
+    checkActiveJob()
+  }, [])
+
   // Subscribe to job events
   useEffect(() => {
     if (!jobId) return
@@ -99,10 +172,17 @@ function PreviewPage({
 
         if (event.type === 'progress' && event.progress !== undefined) {
           setStatus((prev) => prev ? { ...prev, progress: event.progress! } : null)
+          // Check for paused state from event data
+          if (event.message === 'Job paused') {
+            setIsPaused(true)
+          } else if (event.message === 'Job resumed') {
+            setIsPaused(false)
+          }
         }
 
         if (event.type === 'complete' || event.type === 'error') {
           setIsRunning(false)
+          setIsPaused(false)
           // Fetch final status and artifacts
           fetchStatusAndArtifacts(jobId)
         }
@@ -175,13 +255,42 @@ function PreviewPage({
         </div>
 
         <div className="preview-actions">
-          <button
-            className="btn btn-primary"
-            onClick={handleStartPreview}
-            disabled={!hasConfig || isRunning}
-          >
-            {isRunning ? 'Running...' : 'Run Preview'}
-          </button>
+          {!isRunning && !isPaused ? (
+            <button
+              className="btn btn-primary"
+              onClick={handleStartPreview}
+              disabled={!hasConfig || reconnecting}
+            >
+              {reconnecting ? 'Checking...' : 'Run Preview'}
+            </button>
+          ) : (
+            <>
+              {isPaused ? (
+                <button
+                  className="btn btn-primary"
+                  onClick={handleResume}
+                  title="Resume the paused job"
+                >
+                  Resume
+                </button>
+              ) : (
+                <button
+                  className="btn btn-secondary"
+                  onClick={handlePause}
+                  title="Pause the running job"
+                >
+                  Pause
+                </button>
+              )}
+              <button
+                className="btn btn-danger"
+                onClick={handleStop}
+                title="Stop and cancel the job"
+              >
+                Stop
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -349,6 +458,8 @@ function getStatusBadgeType(status: string): string {
       return 'error'
     case 'running':
       return 'info'
+    case 'paused':
+      return 'warning'
     case 'pending':
       return 'warning'
     default:
