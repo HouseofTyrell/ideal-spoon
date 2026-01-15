@@ -357,6 +357,11 @@ def main():
         # FAST PATH CHECK: Skip Kometa for simple overlays
         # If overlays only use static metadata (resolution, audio, HDR),
         # we can use the instant compositor output directly.
+        #
+        # NOTE: Fast path is DISABLED BY DEFAULT because the instant
+        # compositor creates simplified text badges that look different
+        # from Kometa's production overlays (which use PNG image assets,
+        # advanced styling, network logos, etc.).
         # ================================================================
         use_fast_path = False
         if FAST_PATH_ENABLED and draft_result == 0:
@@ -365,6 +370,8 @@ def main():
                 logger.info("=" * 60)
                 logger.info("FAST PATH: Overlays use only static metadata")
                 logger.info("Skipping Kometa - using instant compositor results")
+                logger.warning("NOTE: Fast path output uses simplified text badges.")
+                logger.warning("      It will look different from Kometa's styled overlays.")
                 logger.info("=" * 60)
                 use_fast_path = True
 

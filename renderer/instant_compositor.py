@@ -1,9 +1,25 @@
 #!/usr/bin/env python3
 """
-Instant Overlay Compositor
+Instant Overlay Compositor - DRAFT PREVIEW ONLY
 
 Creates draft preview images in ~0.5 seconds using hardcoded metadata.
 These are shown immediately while Kometa runs in the background for accurate results.
+
+IMPORTANT: This compositor creates SIMPLIFIED text badges, not production-quality
+overlays. Kometa uses pre-made PNG image assets with advanced styling features
+that this compositor does not replicate:
+
+  - Pre-made PNG overlay images from PMM (network logos, streaming icons, etc.)
+  - Custom fonts with styles (bold, italic, etc.)
+  - Stroke/outline on text
+  - Rounded corners (back_radius)
+  - Border lines (back_line_width)
+  - Shadows and gradients
+  - Auto-sizing containers
+  - Dynamic text variables (<<imdb_rating>>, etc.)
+
+The output from this compositor is intended for quick previews during editing,
+NOT as a replacement for Kometa's production rendering.
 
 Uses Pillow to composite overlay badge images onto posters based on metadata.
 
