@@ -67,12 +67,29 @@ except ImportError:
     print("Warning: overlay_assets module not available, using text fallbacks")
     HAS_OVERLAY_ASSETS = False
 
+# Import overlay positioning module
+try:
+    from overlay_positioning import (
+        parse_overlay_positions,
+        calculate_position,
+        get_default_position_config,
+    )
+    HAS_POSITIONING = True
+except ImportError:
+    print("Warning: overlay_positioning module not available, using hardcoded positions")
+    HAS_POSITIONING = False
+
 from io import BytesIO
 
 
 # Standard poster dimensions (Plex uses 1000x1500 for posters)
 POSTER_WIDTH = 1000
 POSTER_HEIGHT = 1500
+
+# Episode dimensions (16:9 widescreen aspect ratio)
+# Using 1920x1080 to match common episode screenshot resolution
+EPISODE_WIDTH = 1920
+EPISODE_HEIGHT = 1080
 
 # Overlay positioning constants
 BADGE_PADDING = 15
@@ -122,15 +139,17 @@ def _get_cached_font(font_size: int = 40) -> ImageFont.FreeTypeFont:
 # ============================================================================
 # Image Pre-processing - Pre-resize images to standard size (saves ~200-400ms)
 # ============================================================================
-def preprocess_input_images(job_path: Path) -> int:
+def preprocess_input_images(job_path: Path, targets: Optional[List[Dict[str, Any]]] = None) -> int:
     """
-    Pre-process all input images to standard poster size.
+    Pre-process all input images to appropriate size based on media type.
 
-    This avoids repeated LANCZOS resizing during compositing, which is
-    expensive. Pre-processed images are cached in input_cached/ directory.
+    Episodes use 16:9 widescreen (1920x1080), everything else uses poster format (1000x1500).
+    This avoids repeated LANCZOS resizing during compositing, which is expensive.
+    Pre-processed images are cached in input_cached/ directory.
 
     Args:
         job_path: Path to job directory
+        targets: Optional list of target dicts with 'id' and 'type' keys
 
     Returns:
         Number of images processed
@@ -138,6 +157,15 @@ def preprocess_input_images(job_path: Path) -> int:
     input_dir = job_path / 'input'
     cached_dir = job_path / 'input_cached'
     cached_dir.mkdir(parents=True, exist_ok=True)
+
+    # Build mapping of target_id -> type for efficient lookup
+    target_types: Dict[str, str] = {}
+    if targets:
+        for target in targets:
+            target_id = target.get('id')
+            target_type = target.get('type', 'movie')
+            if target_id:
+                target_types[target_id] = target_type
 
     processed = 0
     for img_file in input_dir.glob('*.jpg'):
@@ -151,9 +179,19 @@ def preprocess_input_images(job_path: Path) -> int:
 
         try:
             img = Image.open(img_file)
-            if img.size != (POSTER_WIDTH, POSTER_HEIGHT):
+
+            # Determine target dimensions based on type
+            target_id = img_file.stem
+            target_type = target_types.get(target_id, 'movie')
+
+            if target_type == 'episode':
+                target_width, target_height = EPISODE_WIDTH, EPISODE_HEIGHT
+            else:
+                target_width, target_height = POSTER_WIDTH, POSTER_HEIGHT
+
+            if img.size != (target_width, target_height):
                 img = img.resize(
-                    (POSTER_WIDTH, POSTER_HEIGHT),
+                    (target_width, target_height),
                     Image.Resampling.LANCZOS
                 )
             # Save as PNG for better quality in compositing
@@ -261,6 +299,8 @@ def create_combined_resolution_hdr_badge(
     This matches Kometa's behavior of combining resolution and HDR info
     into a single badge (e.g., "4K DV" instead of separate "4K" and "DV" badges).
 
+    Tries to use PNG asset for resolution first, then overlays HDR/DV text if needed.
+
     Args:
         resolution: Resolution string (4K, 1080p, etc.)
         hdr: Whether HDR is present
@@ -269,19 +309,34 @@ def create_combined_resolution_hdr_badge(
     Returns:
         Combined badge image
     """
-    # Build the combined text
+    # Try to load resolution PNG asset first
+    if HAS_OVERLAY_ASSETS:
+        asset_data = get_resolution_asset(resolution)
+        if asset_data:
+            base_badge = load_png_overlay(asset_data, max_width=305, max_height=105)
+            if base_badge:
+                print(f"  Using resolution PNG asset for: {resolution}")
+                # TODO: When HDR/DV is present, Kometa uses "dovetail" to combine
+                # For now, if HDR/DV is present, we still return the PNG but note
+                # that ideally we'd composite HDR/DV text onto the badge or stack them
+                if dolby_vision or hdr:
+                    print(f"  Note: HDR/DV present but not yet composited onto resolution PNG")
+                return base_badge
+        else:
+            print(f"  No resolution PNG asset found for: {resolution}, using text badge")
+
+    # Fallback to text badge when PNG not available
     display_text = resolution.upper() if resolution.lower() in ['4k'] else resolution
 
     if dolby_vision:
         display_text = f"{display_text} DV"
         # Use cyan color for DV text portion
-        # For now, use single color - we'll enhance later with multi-color support
         return create_badge(display_text, text_color='#00D4AA', font_size=45, width=350)
     elif hdr:
         display_text = f"{display_text} HDR"
         return create_badge(display_text, text_color='#FFD700', font_size=45, width=350)
     else:
-        # Just resolution, no HDR
+        # Just resolution text badge
         resolution_colors = {
             '4K': '#FFD700',
             '4k': '#FFD700',
@@ -379,7 +434,12 @@ def create_ribbon(ribbon_type: str) -> Optional[Image.Image]:
     if HAS_OVERLAY_ASSETS:
         asset_data = get_ribbon_asset(ribbon_type)
         if asset_data:
-            return load_png_overlay(asset_data, max_width=300, max_height=300)
+            ribbon = load_png_overlay(asset_data, max_width=300, max_height=300)
+            if ribbon:
+                print(f"  Using ribbon PNG asset for: {ribbon_type}")
+                return ribbon
+        else:
+            print(f"  No ribbon PNG asset found for: {ribbon_type}, using generated ribbon")
 
     # Ribbon configurations for different types
     ribbon_configs = {
@@ -673,6 +733,12 @@ def _create_single_rating_badge(source: str, value: str) -> Optional[Image.Image
         asset_data = get_rating_source_asset(source)
         if asset_data:
             logo = load_png_overlay(asset_data, max_width=40, max_height=40)
+            if logo:
+                print(f"  Using rating logo PNG asset for: {source}")
+            else:
+                print(f"  Failed to load rating logo PNG for: {source}")
+        else:
+            print(f"  No rating logo PNG asset found for: {source}")
 
     # Create badge background
     badge_width = 100 if logo else 80
@@ -738,9 +804,15 @@ def create_audio_overlay_png(audio_codec: str) -> Optional[Image.Image]:
     if HAS_OVERLAY_ASSETS:
         asset_data = get_audio_codec_asset(audio_codec)
         if asset_data:
-            return load_png_overlay(asset_data, max_width=200, max_height=80)
+            overlay = load_png_overlay(asset_data, max_width=305, max_height=105)
+            if overlay:
+                print(f"  Using audio codec PNG asset for: {audio_codec}")
+                return overlay
+        else:
+            print(f"  No audio codec PNG asset found for: {audio_codec}, using text badge")
 
     # Fallback to existing text badge
+    print(f"  Using text badge fallback for audio codec: {audio_codec}")
     return create_audio_badge(audio_codec)
 
 
@@ -776,7 +848,8 @@ def composite_overlays(
     output_path: Path,
     metadata: Dict[str, Any],
     target_type: str,
-    use_png_assets: bool = True
+    use_png_assets: bool = True,
+    overlay_positions: Optional[Dict[str, Dict[str, Any]]] = None
 ) -> bool:
     """
     Composite overlay badges onto a poster image.
@@ -787,6 +860,7 @@ def composite_overlays(
         metadata: Preview metadata dict
         target_type: Type of item (movie, show, season, episode)
         use_png_assets: Whether to use PNG assets from Kometa (default: True)
+        overlay_positions: Optional dict of overlay positioning configs from Kometa config
 
     Returns:
         True if successful, False otherwise
@@ -799,17 +873,27 @@ def composite_overlays(
 
         img = Image.open(input_path).convert('RGBA')
 
-        # Scale to standard poster size if needed
-        if img.size != (POSTER_WIDTH, POSTER_HEIGHT):
-            img = img.resize((POSTER_WIDTH, POSTER_HEIGHT), Image.Resampling.LANCZOS)
+        # Determine target dimensions based on media type
+        if target_type == 'episode':
+            target_width, target_height = EPISODE_WIDTH, EPISODE_HEIGHT
+        else:
+            target_width, target_height = POSTER_WIDTH, POSTER_HEIGHT
 
-        # Track vertical positions for stacking badges
+        # Scale to appropriate size if needed
+        if img.size != (target_width, target_height):
+            img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+
+        # Initialize overlay_positions if not provided
+        if overlay_positions is None:
+            overlay_positions = {}
+
+        # Track vertical positions for stacking badges (fallback for when no positioning config)
         top_left_y = BADGE_PADDING
         top_right_y = BADGE_PADDING
-        bottom_left_y = POSTER_HEIGHT - BADGE_HEIGHT - BADGE_PADDING
-        bottom_right_y = POSTER_HEIGHT - BADGE_HEIGHT - BADGE_PADDING
+        bottom_left_y = target_height - BADGE_HEIGHT - BADGE_PADDING
+        bottom_right_y = target_height - BADGE_HEIGHT - BADGE_PADDING
 
-        # Combined Resolution + HDR badge (top-left)
+        # Combined Resolution + HDR badge
         # Kometa combines these into a single badge like "4K DV" instead of stacking separately
         if metadata.get('resolution'):
             # Create combined badge (resolution + HDR/DV if present)
@@ -819,44 +903,84 @@ def composite_overlays(
                 dolby_vision=metadata.get('dolbyVision', False)
             )
             if badge:
-                img.paste(badge, (BADGE_PADDING, top_left_y), badge)
-                top_left_y += badge.height + 5
+                # Use dynamic positioning if available
+                if HAS_POSITIONING and 'resolution' in overlay_positions:
+                    pos_config = overlay_positions['resolution']
+                    x, y = calculate_position(badge.width, badge.height, target_width, target_height, pos_config)
+                    print(f"  Resolution positioned at ({x}, {y}) using config")
+                else:
+                    # Fallback to hardcoded top-left
+                    x, y = BADGE_PADDING, top_left_y
+                    top_left_y += badge.height + 5
+                img.paste(badge, (x, y), badge)
 
-        # Audio codec badge (below resolution)
+        # Audio codec badge
         if metadata.get('audioCodec'):
             if use_png_assets:
                 badge = create_audio_overlay_png(metadata['audioCodec'])
             else:
                 badge = create_audio_badge(metadata['audioCodec'])
             if badge:
-                img.paste(badge, (BADGE_PADDING, top_left_y), badge)
-                top_left_y += badge.height + 5
+                # Use dynamic positioning if available
+                if HAS_POSITIONING and 'audio_codec' in overlay_positions:
+                    pos_config = overlay_positions['audio_codec']
+                    x, y = calculate_position(badge.width, badge.height, target_width, target_height, pos_config)
+                    print(f"  Audio codec positioned at ({x}, {y}) using config")
+                else:
+                    # Fallback to hardcoded position (below resolution)
+                    x, y = BADGE_PADDING, top_left_y
+                    top_left_y += badge.height + 5
+                img.paste(badge, (x, y), badge)
 
-        # Streaming services (top-right)
+        # Streaming services
         if metadata.get('streaming'):
             streaming_overlay = create_streaming_overlay(metadata['streaming'])
             if streaming_overlay:
-                x = POSTER_WIDTH - streaming_overlay.width - BADGE_PADDING
-                img.paste(streaming_overlay, (x, top_right_y), streaming_overlay)
-                top_right_y += streaming_overlay.height + 5
+                # Use dynamic positioning if available
+                if HAS_POSITIONING and 'streaming' in overlay_positions:
+                    pos_config = overlay_positions['streaming']
+                    x, y = calculate_position(streaming_overlay.width, streaming_overlay.height, target_width, target_height, pos_config)
+                    print(f"  Streaming positioned at ({x}, {y}) using config")
+                else:
+                    # Fallback to hardcoded top-right
+                    x = target_width - streaming_overlay.width - BADGE_PADDING
+                    y = top_right_y
+                    top_right_y += streaming_overlay.height + 5
+                img.paste(streaming_overlay, (x, y), streaming_overlay)
 
-        # Network (below streaming, top-right)
+        # Network
         if metadata.get('network'):
             network_overlay = create_network_overlay(metadata['network'])
             if network_overlay:
-                x = POSTER_WIDTH - network_overlay.width - BADGE_PADDING
-                img.paste(network_overlay, (x, top_right_y), network_overlay)
-                top_right_y += network_overlay.height + 5
+                # Use dynamic positioning if available
+                if HAS_POSITIONING and 'network' in overlay_positions:
+                    pos_config = overlay_positions['network']
+                    x, y = calculate_position(network_overlay.width, network_overlay.height, target_width, target_height, pos_config)
+                    print(f"  Network positioned at ({x}, {y}) using config")
+                else:
+                    # Fallback to hardcoded position (below streaming)
+                    x = target_width - network_overlay.width - BADGE_PADDING
+                    y = top_right_y
+                    top_right_y += network_overlay.height + 5
+                img.paste(network_overlay, (x, y), network_overlay)
 
-        # Studio (below network, top-right)
+        # Studio
         if metadata.get('studio'):
             studio_overlay = create_studio_overlay(metadata['studio'])
             if studio_overlay:
-                x = POSTER_WIDTH - studio_overlay.width - BADGE_PADDING
-                img.paste(studio_overlay, (x, top_right_y), studio_overlay)
-                top_right_y += studio_overlay.height + 5
+                # Use dynamic positioning if available
+                if HAS_POSITIONING and 'studio' in overlay_positions:
+                    pos_config = overlay_positions['studio']
+                    x, y = calculate_position(studio_overlay.width, studio_overlay.height, target_width, target_height, pos_config)
+                    print(f"  Studio positioned at ({x}, {y}) using config")
+                else:
+                    # Fallback to hardcoded position (below network)
+                    x = target_width - studio_overlay.width - BADGE_PADDING
+                    y = top_right_y
+                    top_right_y += studio_overlay.height + 5
+                img.paste(studio_overlay, (x, y), studio_overlay)
 
-        # Ratings (bottom-left)
+        # Ratings
         if any(metadata.get(k) for k in ['imdbRating', 'tmdbRating', 'rtRating']):
             ratings_overlay = create_ratings_overlay(
                 imdb_rating=metadata.get('imdbRating'),
@@ -864,21 +988,45 @@ def composite_overlays(
                 rt_rating=metadata.get('rtRating')
             )
             if ratings_overlay:
-                img.paste(ratings_overlay, (BADGE_PADDING, bottom_left_y), ratings_overlay)
+                # Use dynamic positioning if available
+                if HAS_POSITIONING and 'ratings' in overlay_positions:
+                    pos_config = overlay_positions['ratings']
+                    x, y = calculate_position(ratings_overlay.width, ratings_overlay.height, target_width, target_height, pos_config)
+                    print(f"  Ratings positioned at ({x}, {y}) using config")
+                else:
+                    # Fallback to hardcoded bottom-left using actual overlay height
+                    x = BADGE_PADDING
+                    y = target_height - ratings_overlay.height - BADGE_PADDING
+                img.paste(ratings_overlay, (x, y), ratings_overlay)
 
-        # Status badge for shows (top center)
+        # Status badge for shows
         if target_type == 'show' and metadata.get('status'):
             badge = create_status_badge(metadata['status'])
-            x = (POSTER_WIDTH - badge.width) // 2
-            img.paste(badge, (x, 0), badge)
+            if badge:
+                # Use dynamic positioning if available
+                if HAS_POSITIONING and 'status' in overlay_positions:
+                    pos_config = overlay_positions['status']
+                    x, y = calculate_position(badge.width, badge.height, target_width, target_height, pos_config)
+                    print(f"  Status positioned at ({x}, {y}) using config")
+                else:
+                    # Fallback to hardcoded top center
+                    x = (target_width - badge.width) // 2
+                    y = 0
+                img.paste(badge, (x, y), badge)
 
-        # Ribbon (bottom-right corner)
+        # Ribbon
         if metadata.get('ribbon'):
             ribbon = create_ribbon(metadata['ribbon'])
             if ribbon:
-                # Position at bottom-right
-                x = POSTER_WIDTH - ribbon.width
-                y = POSTER_HEIGHT - ribbon.height
+                # Use dynamic positioning if available
+                if HAS_POSITIONING and 'ribbon' in overlay_positions:
+                    pos_config = overlay_positions['ribbon']
+                    x, y = calculate_position(ribbon.width, ribbon.height, target_width, target_height, pos_config)
+                    print(f"  Ribbon positioned at ({x}, {y}) using config")
+                else:
+                    # Fallback to hardcoded bottom-right corner
+                    x = target_width - ribbon.width
+                    y = target_height - ribbon.height
                 img.paste(ribbon, (x, y), ribbon)
 
         # Convert to RGB for PNG output (or keep RGBA)
@@ -901,7 +1049,8 @@ def composite_overlays(
 def _composite_target(
     target: Dict[str, Any],
     job_path: Path,
-    draft_dir: Path
+    draft_dir: Path,
+    overlay_positions: Optional[Dict[str, Dict[str, Any]]] = None
 ) -> Tuple[str, bool]:
     """
     Composite a single target (used for parallel processing).
@@ -920,7 +1069,7 @@ def _composite_target(
     input_path = get_input_image_path(job_path, target_id)
     output_path = draft_dir / f"{target_id}_draft.png"
 
-    success = composite_overlays(input_path, output_path, metadata, target_type)
+    success = composite_overlays(input_path, output_path, metadata, target_type, overlay_positions=overlay_positions)
     return (target_id, success)
 
 
@@ -982,13 +1131,14 @@ def run_manual_preview(
         print("Preloading overlay assets from Kometa Default-Images...")
         preload_common_assets()
 
-    # Pre-process input images
-    preprocessed = preprocess_input_images(job_path)
+    # Filter targets with metadata
+    valid_targets = [t for t in targets if t.get('metadata')]
+
+    # Pre-process input images with target type info for proper aspect ratios
+    preprocessed = preprocess_input_images(job_path, valid_targets)
     if preprocessed > 0:
         print(f"Pre-processed {preprocessed} input images")
 
-    # Filter targets with metadata
-    valid_targets = [t for t in targets if t.get('metadata')]
     print(f"Processing {len(valid_targets)} targets with manual overlay selections...")
 
     # Log enabled overlays
@@ -998,6 +1148,26 @@ def run_manual_preview(
     print(f"Enabled overlays: {enabled_overlays}")
     if enabled_ribbons:
         print(f"Enabled ribbons: {enabled_ribbons}")
+
+    # Parse overlay positions from config
+    overlay_positions: Dict[str, Dict[str, Any]] = {}
+    if HAS_POSITIONING:
+        # Determine library name based on target types
+        has_tv = any(t.get('type') in ['show', 'season', 'episode'] for t in valid_targets)
+        has_movies = any(t.get('type') == 'movie' for t in valid_targets)
+
+        # For mixed content, we'll need to parse both libraries
+        # For now, default to Movies if only movies, TV Shows if only TV, Movies if mixed
+        library_name = "TV Shows" if has_tv and not has_movies else "Movies"
+
+        try:
+            overlay_positions = parse_overlay_positions(config, library_name)
+            if overlay_positions:
+                print(f"Loaded positioning config for library: {library_name}")
+                print(f"  Positioned overlays: {list(overlay_positions.keys())}")
+        except Exception as e:
+            print(f"Warning: Failed to parse overlay positions: {e}")
+            overlay_positions = {}
 
     success_count = 0
 
@@ -1009,7 +1179,8 @@ def run_manual_preview(
                 target,
                 job_path,
                 draft_dir,
-                manual_overlays
+                manual_overlays,
+                overlay_positions
             ): target
             for target in valid_targets
         }
@@ -1040,7 +1211,8 @@ def _composite_manual_target(
     target: Dict[str, Any],
     job_path: Path,
     draft_dir: Path,
-    manual_overlays: Dict[str, Any]
+    manual_overlays: Dict[str, Any],
+    overlay_positions: Optional[Dict[str, Dict[str, Any]]] = None
 ) -> Tuple[str, bool]:
     """
     Composite a single target with manual overlay selections.
@@ -1111,7 +1283,7 @@ def _composite_manual_target(
     input_path = get_input_image_path(job_path, target_id)
     output_path = draft_dir / f"{target_id}_draft.png"
 
-    success = composite_overlays(input_path, output_path, filtered_metadata, target_type)
+    success = composite_overlays(input_path, output_path, filtered_metadata, target_type, overlay_positions=overlay_positions)
     return (target_id, success)
 
 
@@ -1154,14 +1326,14 @@ def run_instant_preview(job_path: Path) -> int:
     for size in [40, 45, 50]:
         _get_cached_font(size)
 
-    # Pre-process input images to standard size (avoids repeated resizing)
-    preprocessed = preprocess_input_images(job_path)
-    if preprocessed > 0:
-        print(f"Pre-processed {preprocessed} input images")
-
     # Filter targets with metadata
     valid_targets = [t for t in targets if t.get('metadata')]
     skipped = len(targets) - len(valid_targets)
+
+    # Pre-process input images with target type info for proper aspect ratios
+    preprocessed = preprocess_input_images(job_path, valid_targets)
+    if preprocessed > 0:
+        print(f"Pre-processed {preprocessed} input images")
 
     if skipped > 0:
         print(f"Skipping {skipped} targets without metadata")
@@ -1169,13 +1341,30 @@ def run_instant_preview(job_path: Path) -> int:
     print(f"Processing {len(valid_targets)} targets in parallel "
           f"(max {MAX_COMPOSITE_WORKERS} workers)...")
 
+    # Parse overlay positions from config
+    overlay_positions: Dict[str, Dict[str, Any]] = {}
+    if HAS_POSITIONING:
+        # Determine library name based on target types
+        has_tv = any(t.get('type') in ['show', 'season', 'episode'] for t in valid_targets)
+        has_movies = any(t.get('type') == 'movie' for t in valid_targets)
+        library_name = "TV Shows" if has_tv and not has_movies else "Movies"
+
+        try:
+            overlay_positions = parse_overlay_positions(config, library_name)
+            if overlay_positions:
+                print(f"Loaded positioning config for library: {library_name}")
+                print(f"  Positioned overlays: {list(overlay_positions.keys())}")
+        except Exception as e:
+            print(f"Warning: Failed to parse overlay positions: {e}")
+            overlay_positions = {}
+
     success_count = 0
     results: List[Tuple[str, bool]] = []
 
     # Process targets in parallel using ThreadPoolExecutor
     with ThreadPoolExecutor(max_workers=MAX_COMPOSITE_WORKERS) as executor:
         futures = {
-            executor.submit(_composite_target, target, job_path, draft_dir): target
+            executor.submit(_composite_target, target, job_path, draft_dir, overlay_positions): target
             for target in valid_targets
         }
 
