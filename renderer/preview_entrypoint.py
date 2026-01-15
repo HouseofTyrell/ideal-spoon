@@ -46,6 +46,8 @@ from constants import (
     TMDB_PROXY_ENABLED,
     FAST_MODE,
     OUTPUT_CACHE_ENABLED,
+    PARALLEL_KOMETA_ENABLED,
+    FAST_PATH_ENABLED,
 )
 from fonts import validate_fonts_at_startup, ensure_font_fallbacks
 from caching import (
@@ -60,6 +62,7 @@ from overlay_fingerprints import (
     determine_targets_needing_render,
     save_target_fingerprints,
     filter_preview_config_for_targets,
+    detect_overlay_complexity,
 )
 from xml_builders import extract_allowed_rating_keys
 from proxy_plex import PlexProxy
@@ -73,7 +76,7 @@ from config import (
     generate_proxy_config,
     redact_yaml_snippet,
 )
-from kometa_runner import run_kometa
+from kometa_runner import run_kometa, run_kometa_parallel
 from export import export_overlay_outputs, export_local_preview_artifacts
 
 
@@ -351,40 +354,85 @@ def main():
             logger.warning(f"Draft preview failed (continuing with Kometa): {e}")
 
         # ================================================================
-        # PHASE 2: Full Kometa Render
+        # FAST PATH CHECK: Skip Kometa for simple overlays
+        # If overlays only use static metadata (resolution, audio, HDR),
+        # we can use the instant compositor output directly.
+        # ================================================================
+        use_fast_path = False
+        if FAST_PATH_ENABLED and draft_result == 0:
+            overlay_complexity = detect_overlay_complexity(preview_config, job_path)
+            if overlay_complexity == 'simple':
+                logger.info("=" * 60)
+                logger.info("FAST PATH: Overlays use only static metadata")
+                logger.info("Skipping Kometa - using instant compositor results")
+                logger.info("=" * 60)
+                use_fast_path = True
+
+                # Copy draft outputs to final output location
+                import shutil
+                draft_dir = output_dir / 'draft'
+                for draft_file in draft_dir.glob('*_draft.png'):
+                    target_id = draft_file.stem.replace('_draft', '')
+                    final_file = output_dir / f"{target_id}_after.png"
+                    shutil.copy(draft_file, final_file)
+                    logger.info(f"  Fast path output: {final_file.name}")
+
+        # ================================================================
+        # PHASE 2: Full Kometa Render (skip if using fast path)
         # Run real Kometa for accurate, production-quality overlays
         # ================================================================
+        if use_fast_path:
+            # Skip Kometa, use instant compositor results
+            exit_code = 0
+            blocked_requests = []
+            captured_uploads = []
+            filtered_requests = []
+            mock_list_requests = []
+            forward_count = 0
+            blocked_metadata_count = 0
+            learned_parents = set()
+            request_log = []
+            sections_get_count = 0
+            metadata_get_count = 0
+            zero_match_searches = 0
+            type_mismatches = []
+        else:
+            # Generate config that points to our proxy
+            kometa_config_path = generate_proxy_config(job_path, preview_config, proxy.proxy_url)
 
-        # Generate config that points to our proxy
-        kometa_config_path = generate_proxy_config(job_path, preview_config, proxy.proxy_url)
+            # Run Kometa
+            logger.info("=" * 60)
+            logger.info("Phase 2: Starting Kometa for accurate render...")
+            logger.info("=" * 60)
 
-        # Run Kometa
-        logger.info("=" * 60)
-        logger.info("Phase 2: Starting Kometa for accurate render...")
-        logger.info("=" * 60)
+            tmdb_proxy_url = tmdb_proxy.proxy_url if tmdb_proxy else None
+            logger.info(f"Launching Kometa with config={kometa_config_path} plex_url={proxy.proxy_url}")
 
-        tmdb_proxy_url = tmdb_proxy.proxy_url if tmdb_proxy else None
-        logger.info(f"Launching Kometa with config={kometa_config_path} plex_url={proxy.proxy_url}")
-        exit_code = run_kometa(kometa_config_path, tmdb_proxy_url=tmdb_proxy_url)
+            # Use parallel execution if enabled and we have mixed library types
+            if PARALLEL_KOMETA_ENABLED:
+                logger.info("Parallel Kometa execution enabled (PREVIEW_PARALLEL_KOMETA=1)")
+                exit_code = run_kometa_parallel(kometa_config_path, tmdb_proxy_url=tmdb_proxy_url)
+            else:
+                exit_code = run_kometa(kometa_config_path, tmdb_proxy_url=tmdb_proxy_url)
 
-        logger.info("=" * 60)
-        logger.info(f"Kometa finished with exit code: {exit_code}")
-        logger.info("=" * 60)
+            logger.info("=" * 60)
+            logger.info(f"Kometa finished with exit code: {exit_code}")
+            logger.info("=" * 60)
 
-        # Get captured data
-        blocked_requests = proxy.get_blocked_requests()
-        captured_uploads = proxy.get_captured_uploads()
-        filtered_requests = proxy.get_filtered_requests()
-        mock_list_requests = proxy.get_mock_list_requests()
-        forward_count = proxy.get_forward_request_count()
-        blocked_metadata_count = proxy.get_blocked_metadata_count()
-        learned_parents = proxy.get_learned_parent_keys()
-        request_log = proxy.get_request_log()
-        sections_get_count = proxy.get_sections_get_count()
-        metadata_get_count = proxy.get_metadata_get_count()
-        # H3/H4: Get diagnostic data
-        zero_match_searches = proxy.get_zero_match_searches()
-        type_mismatches = proxy.get_type_mismatches()
+            # Get captured data
+            blocked_requests = proxy.get_blocked_requests()
+            captured_uploads = proxy.get_captured_uploads()
+            filtered_requests = proxy.get_filtered_requests()
+            mock_list_requests = proxy.get_mock_list_requests()
+            forward_count = proxy.get_forward_request_count()
+            blocked_metadata_count = proxy.get_blocked_metadata_count()
+            learned_parents = proxy.get_learned_parent_keys()
+            request_log = proxy.get_request_log()
+            sections_get_count = proxy.get_sections_get_count()
+            metadata_get_count = proxy.get_metadata_get_count()
+            # H3/H4: Get diagnostic data
+            zero_match_searches = proxy.get_zero_match_searches()
+            type_mismatches = proxy.get_type_mismatches()
 
         logger.info(f"Blocked {len(blocked_requests)} write attempts")
         logger.info(f"Captured {len(captured_uploads)} uploads")
@@ -394,8 +442,8 @@ def main():
             if req.get('method') == 'GET' and re.match(r'^/library/sections/\d+/all$', req.get('path_base', ''))
         )
 
-        # Traffic sanity check: ensure proxy is in the request path
-        if sections_get_count == 0 and metadata_get_count == 0 and sections_all_count == 0:
+        # Traffic sanity check: ensure proxy is in the request path (skip for fast path)
+        if not use_fast_path and sections_get_count == 0 and metadata_get_count == 0 and sections_all_count == 0:
             logger.error("PROXY_TRAFFIC_SANITY_FAILED: missing expected Plex GET traffic")
             logger.error(f"  /library/sections GETs: {sections_get_count}")
             logger.error(f"  /library/metadata/* GETs: {metadata_get_count}")

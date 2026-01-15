@@ -9,6 +9,7 @@ Key Concepts:
 - Overlay Fingerprint: SHA256 hash of an overlay file's content
 - Target Affinity: Which overlay files affect which target types (movie vs TV)
 - Granular Cache: Per-target cache entries that include overlay fingerprints
+- Complexity Detection: Determines if overlays can skip Kometa (fast path)
 
 Since the 5 preview targets are fixed (matrix, dune, breakingbad_series/s01/s01e01),
 we can cache results per-target and only re-render when relevant overlays change.
@@ -28,6 +29,99 @@ TV_SHOW_TARGETS = {'breakingbad_series'}
 TV_SEASON_TARGETS = {'breakingbad_s01'}
 TV_EPISODE_TARGETS = {'breakingbad_s01e01'}
 ALL_TV_TARGETS = TV_SHOW_TARGETS | TV_SEASON_TARGETS | TV_EPISODE_TARGETS
+
+# ============================================================================
+# Overlay Complexity Detection - Determines if fast path can be used
+# ============================================================================
+
+# Keys that indicate complex overlays requiring full Kometa
+COMPLEX_OVERLAY_KEYS = {
+    # External API builders
+    'plex_search', 'plex_all', 'smart_filter', 'smart_label',
+    'tmdb_discover', 'tmdb_list', 'tmdb_popular', 'tmdb_trending',
+    'trakt_list', 'trakt_trending', 'trakt_popular', 'trakt_recommendations',
+    'imdb_list', 'imdb_chart', 'letterboxd_list',
+    'tautulli', 'mdblist_list', 'reciperr_list', 'stevenlu_popular',
+    'anidb', 'anilist', 'mal',
+    # Dynamic content builders
+    'builders', 'sync_mode', 'run_definition', 'schedule',
+    # Conditional logic that needs evaluation
+    'suppress_overlays', 'overlay_reset',
+}
+
+# Keys that are safe for instant compositor (static metadata only)
+SIMPLE_OVERLAY_KEYS = {
+    # Visual properties
+    'name', 'file', 'url', 'git', 'repo',
+    'horizontal_offset', 'vertical_offset', 'horizontal_align', 'vertical_align',
+    'back_color', 'back_width', 'back_height', 'back_padding', 'back_radius', 'back_line_width',
+    # Text properties
+    'font', 'font_size', 'font_color', 'font_style', 'stroke_color', 'stroke_width',
+    # Basic conditions using static metadata
+    'group', 'weight', 'queue',
+}
+
+
+def detect_overlay_complexity(
+    preview_config: Dict[str, Any],
+    job_path: Path
+) -> str:
+    """
+    Detect the complexity of overlays in the config.
+
+    Returns:
+        'simple' - Can use instant compositor (fast path)
+        'complex' - Requires full Kometa render
+    """
+    libraries = preview_config.get('libraries', {})
+    if not isinstance(libraries, dict):
+        return 'simple'
+
+    for lib_name, lib_config in libraries.items():
+        if not isinstance(lib_config, dict):
+            continue
+
+        overlay_entries = lib_config.get('overlay_files', [])
+        if not isinstance(overlay_entries, list):
+            continue
+
+        for entry in overlay_entries:
+            if isinstance(entry, str):
+                overlay_path = _resolve_overlay_path(job_path, entry)
+            elif isinstance(entry, dict) and 'file' in entry:
+                overlay_path = _resolve_overlay_path(job_path, str(entry['file']))
+            else:
+                continue
+
+            if overlay_path.exists():
+                complexity = _analyze_overlay_file(overlay_path)
+                if complexity == 'complex':
+                    logger.info(f"Complex overlay detected: {overlay_path.name}")
+                    return 'complex'
+
+    logger.info("All overlays are simple - fast path eligible")
+    return 'simple'
+
+
+def _analyze_overlay_file(overlay_path: Path) -> str:
+    """
+    Analyze an overlay file to determine its complexity.
+
+    Returns: 'simple' or 'complex'
+    """
+    try:
+        content = overlay_path.read_text().lower()
+
+        # Check for complex keys
+        for key in COMPLEX_OVERLAY_KEYS:
+            if key in content:
+                return 'complex'
+
+        return 'simple'
+
+    except Exception as e:
+        logger.debug(f"Could not analyze {overlay_path}: {e}")
+        return 'complex'  # Assume complex if we can't analyze
 
 
 def compute_overlay_fingerprint(overlay_path: Path) -> Optional[str]:

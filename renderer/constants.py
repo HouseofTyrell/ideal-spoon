@@ -25,6 +25,12 @@ PROXY_HOST = '127.0.0.1'
 # Output caching - skip rendering if config unchanged
 OUTPUT_CACHE_ENABLED = os.environ.get('PREVIEW_OUTPUT_CACHE', '1') == '1'
 
+# Parallel execution - run movies and TV shows in separate Kometa processes
+PARALLEL_KOMETA_ENABLED = os.environ.get('PREVIEW_PARALLEL_KOMETA', '1') == '1'
+
+# Fast path - skip Kometa for simple overlays and use instant compositor
+FAST_PATH_ENABLED = os.environ.get('PREVIEW_FAST_PATH', '1') == '1'
+
 # ============================================================================
 # Preview Accuracy Mode Configuration
 # ============================================================================
