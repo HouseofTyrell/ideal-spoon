@@ -40,31 +40,31 @@ CACHE_METADATA_FILE = "cache_metadata.json"
 # These match Kometa's Default-Images repository structure
 
 STREAMING_ASSETS = {
-    # Service name -> path in Default-Images repo
+    # Service name -> path in Default-Images repo (logos, not overlays)
     # Major US Services
-    "netflix": "streaming/streaming/netflix.png",
-    "max": "streaming/streaming/max.png",
-    "hbo_max": "streaming/streaming/max.png",  # Alias
-    "hbo": "streaming/streaming/max.png",  # Alias
-    "prime": "streaming/streaming/amazon%20prime%20video.png",
-    "amazon": "streaming/streaming/amazon%20prime%20video.png",
-    "amazon_prime": "streaming/streaming/amazon%20prime%20video.png",
-    "amazon_prime_video": "streaming/streaming/amazon%20prime%20video.png",
-    "disney": "streaming/streaming/disney%2B.png",
-    "disney+": "streaming/streaming/disney%2B.png",
-    "disneyplus": "streaming/streaming/disney%2B.png",
-    "hulu": "streaming/streaming/hulu.png",
-    "appletv": "streaming/streaming/apple%20tv%2B.png",
-    "apple_tv": "streaming/streaming/apple%20tv%2B.png",
-    "apple_tv+": "streaming/streaming/apple%20tv%2B.png",
-    "apple": "streaming/streaming/apple%20tv%2B.png",
-    "peacock": "streaming/streaming/peacock.png",
+    "netflix": "streaming/logos/Netflix.png",
+    "max": "streaming/logos/Max.png",
+    "hbo_max": "streaming/logos/HBO Max.png",  # Alias
+    "hbo": "streaming/logos/HBO Max.png",  # Alias
+    "prime": "streaming/logos/Prime Video.png",
+    "amazon": "streaming/logos/Prime Video.png",
+    "amazon_prime": "streaming/logos/Prime Video.png",
+    "amazon_prime_video": "streaming/logos/Prime Video.png",
+    "disney": "streaming/logos/Disney+.png",
+    "disney+": "streaming/logos/Disney+.png",
+    "disneyplus": "streaming/logos/Disney+.png",
+    "hulu": "streaming/logos/Hulu.png",
+    "appletv": "streaming/logos/Apple TV+.png",
+    "apple_tv": "streaming/logos/Apple TV+.png",
+    "apple_tv+": "streaming/logos/Apple TV+.png",
+    "apple": "streaming/logos/Apple TV+.png",
+    "peacock": "streaming/logos/Peacock.png",
     "paramount": "streaming/streaming/paramount%2B.png",
     "paramount+": "streaming/streaming/paramount%2B.png",
     "paramountplus": "streaming/streaming/paramount%2B.png",
     # Premium Cable Streaming
-    "amc_plus": "streaming/streaming/amc%2B.png",
-    "amc+": "streaming/streaming/amc%2B.png",
+    "amc_plus": "streaming/logos/AMC+.png",
+    "amc+": "streaming/logos/AMC+.png",
     "showtime": "streaming/streaming/showtime.png",
     "starz": "streaming/streaming/starz.png",
     "mgm+": "streaming/streaming/mgm%2B.png",
@@ -126,24 +126,24 @@ STREAMING_ASSETS = {
 }
 
 NETWORK_ASSETS = {
-    # Network name -> path in Default-Images repo
+    # Network name -> path in Default-Images repo (logos, not network/network/)
     # Major Broadcast Networks
-    "abc": "network/network/abc.png",
-    "nbc": "network/network/nbc.png",
-    "cbs": "network/network/cbs.png",
-    "fox": "network/network/fox.png",
-    "the_cw": "network/network/the%20cw.png",
-    "cw": "network/network/the%20cw.png",
-    "pbs": "network/network/pbs.png",
+    "abc": "network/logos/ABC.png",
+    "nbc": "network/logos/NBC.png",
+    "cbs": "network/logos/CBS.png",
+    "fox": "network/logos/FOX.png",
+    "the_cw": "network/logos/The CW.png",
+    "cw": "network/logos/The CW.png",
+    "pbs": "network/logos/PBS.png",
     # Premium Cable
-    "hbo": "network/network/hbo.png",
-    "showtime": "network/network/showtime.png",
-    "starz": "network/network/starz.png",
-    "cinemax": "network/network/cinemax.png",
-    "epix": "network/network/epix.png",
+    "hbo": "network/logos/HBO.png",
+    "showtime": "network/logos/Showtime.png",
+    "starz": "network/logos/Starz.png",
+    "cinemax": "network/logos/Cinemax.png",
+    "epix": "network/logos/EPIX.png",
     # Basic Cable - Entertainment
-    "amc": "network/network/amc.png",
-    "fx": "network/network/fx.png",
+    "amc": "network/logos/AMC.png",
+    "fx": "network/logos/FX.png",
     "fxx": "network/network/fxx.png",
     "usa": "network/network/usa%20network.png",
     "usa_network": "network/network/usa%20network.png",
@@ -248,17 +248,17 @@ NETWORK_ASSETS = {
 }
 
 STUDIO_ASSETS = {
-    # Studio name (lowercase) -> path in Default-Images repo
+    # Studio name (lowercase) -> path in Default-Images repo (logos, not studio/studio/)
     # Major Hollywood Studios
-    "warner bros. pictures": "studio/studio/warner%20bros.%20pictures.png",
-    "warner bros.": "studio/studio/warner%20bros.%20pictures.png",
-    "warner bros": "studio/studio/warner%20bros.%20pictures.png",
-    "warner": "studio/studio/warner%20bros.%20pictures.png",
-    "warner bros. television": "studio/studio/warner%20bros.%20television.png",
-    "legendary pictures": "studio/studio/legendary%20pictures.png",
-    "legendary": "studio/studio/legendary%20pictures.png",
-    "sony pictures": "studio/studio/sony%20pictures.png",
-    "sony pictures television": "studio/studio/sony%20pictures%20television.png",
+    "warner bros. pictures": "studio/logos/Warner Bros. Pictures.png",
+    "warner bros.": "studio/logos/Warner Bros. Pictures.png",
+    "warner bros": "studio/logos/Warner Bros. Pictures.png",
+    "warner": "studio/logos/Warner Bros. Pictures.png",
+    "warner bros. television": "studio/logos/Warner Bros. Television.png",
+    "legendary pictures": "studio/logos/Legendary Pictures.png",
+    "legendary": "studio/logos/Legendary Pictures.png",
+    "sony pictures": "studio/logos/Sony Pictures.png",
+    "sony pictures television": "studio/logos/Sony Pictures Television.png",
     "sony": "studio/studio/sony%20pictures.png",
     "universal pictures": "studio/studio/universal%20pictures.png",
     "universal studios": "studio/studio/universal%20pictures.png",
@@ -287,10 +287,10 @@ STUDIO_ASSETS = {
     "abc studios": "studio/studio/abc%20studios.png",
     "abc signature": "studio/studio/abc%20signature.png",
     # Warner/DC
-    "marvel studios": "studio/studio/marvel%20studios.png",
-    "marvel": "studio/studio/marvel%20studios.png",
-    "marvel entertainment": "studio/studio/marvel%20entertainment.png",
-    "marvel television": "studio/studio/marvel%20television.png",
+    "marvel studios": "studio/logos/Marvel Studios.png",
+    "marvel": "studio/logos/Marvel Studios.png",
+    "marvel entertainment": "studio/logos/Marvel Entertainment.png",
+    "marvel television": "studio/logos/Marvel Television.png",
     "dc studios": "studio/studio/dc%20studios.png",
     "dc films": "studio/studio/dc%20studios.png",
     "dc entertainment": "studio/studio/dc%20entertainment.png",
@@ -321,7 +321,7 @@ STUDIO_ASSETS = {
     "fox searchlight": "studio/studio/searchlight%20pictures.png",
     "searchlight": "studio/studio/searchlight%20pictures.png",
     # Art House/Independent
-    "a24": "studio/studio/a24.png",
+    "a24": "studio/logos/A24.png",
     "neon": "studio/studio/neon.png",
     "annapurna pictures": "studio/studio/annapurna%20pictures.png",
     "annapurna": "studio/studio/annapurna%20pictures.png",
