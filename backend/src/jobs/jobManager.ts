@@ -44,6 +44,7 @@ export interface JobArtifacts {
     type: string;
     beforeUrl: string;
     afterUrl: string;
+    draftUrl?: string;
     baseSource: ArtworkSource;
     warnings: string[];
   }>;
