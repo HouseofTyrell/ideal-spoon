@@ -221,7 +221,7 @@ def get_default_position_config(overlay_type: str) -> Dict[str, Any]:
         'ratings': {
             'horizontal_align': 'left',
             'vertical_align': 'center',
-            'horizontal_offset': 0,
+            'horizontal_offset': 30,
             'vertical_offset': 0,
         },
         'streaming': {
