@@ -71,6 +71,7 @@ except ImportError:
 try:
     from overlay_positioning import (
         parse_overlay_positions,
+        get_position_for_target,
         calculate_position,
         get_default_position_config,
     )
@@ -904,8 +905,11 @@ def composite_overlays(
             )
             if badge:
                 # Use dynamic positioning if available
-                if HAS_POSITIONING and 'resolution' in overlay_positions:
-                    pos_config = overlay_positions['resolution']
+                pos_config = None
+                if HAS_POSITIONING:
+                    pos_config = get_position_for_target('resolution', target_type, overlay_positions)
+
+                if pos_config:
                     x, y = calculate_position(badge.width, badge.height, target_width, target_height, pos_config)
                     print(f"  Resolution positioned at ({x}, {y}) using config")
                 else:
@@ -922,8 +926,11 @@ def composite_overlays(
                 badge = create_audio_badge(metadata['audioCodec'])
             if badge:
                 # Use dynamic positioning if available
-                if HAS_POSITIONING and 'audio_codec' in overlay_positions:
-                    pos_config = overlay_positions['audio_codec']
+                pos_config = None
+                if HAS_POSITIONING:
+                    pos_config = get_position_for_target('audio_codec', target_type, overlay_positions)
+
+                if pos_config:
                     x, y = calculate_position(badge.width, badge.height, target_width, target_height, pos_config)
                     print(f"  Audio codec positioned at ({x}, {y}) using config")
                 else:
@@ -937,8 +944,11 @@ def composite_overlays(
             streaming_overlay = create_streaming_overlay(metadata['streaming'])
             if streaming_overlay:
                 # Use dynamic positioning if available
-                if HAS_POSITIONING and 'streaming' in overlay_positions:
-                    pos_config = overlay_positions['streaming']
+                pos_config = None
+                if HAS_POSITIONING:
+                    pos_config = get_position_for_target('streaming', target_type, overlay_positions)
+
+                if pos_config:
                     x, y = calculate_position(streaming_overlay.width, streaming_overlay.height, target_width, target_height, pos_config)
                     print(f"  Streaming positioned at ({x}, {y}) using config")
                 else:
@@ -953,8 +963,11 @@ def composite_overlays(
             network_overlay = create_network_overlay(metadata['network'])
             if network_overlay:
                 # Use dynamic positioning if available
-                if HAS_POSITIONING and 'network' in overlay_positions:
-                    pos_config = overlay_positions['network']
+                pos_config = None
+                if HAS_POSITIONING:
+                    pos_config = get_position_for_target('network', target_type, overlay_positions)
+
+                if pos_config:
                     x, y = calculate_position(network_overlay.width, network_overlay.height, target_width, target_height, pos_config)
                     print(f"  Network positioned at ({x}, {y}) using config")
                 else:
@@ -969,8 +982,11 @@ def composite_overlays(
             studio_overlay = create_studio_overlay(metadata['studio'])
             if studio_overlay:
                 # Use dynamic positioning if available
-                if HAS_POSITIONING and 'studio' in overlay_positions:
-                    pos_config = overlay_positions['studio']
+                pos_config = None
+                if HAS_POSITIONING:
+                    pos_config = get_position_for_target('studio', target_type, overlay_positions)
+
+                if pos_config:
                     x, y = calculate_position(studio_overlay.width, studio_overlay.height, target_width, target_height, pos_config)
                     print(f"  Studio positioned at ({x}, {y}) using config")
                 else:
@@ -989,8 +1005,11 @@ def composite_overlays(
             )
             if ratings_overlay:
                 # Use dynamic positioning if available
-                if HAS_POSITIONING and 'ratings' in overlay_positions:
-                    pos_config = overlay_positions['ratings']
+                pos_config = None
+                if HAS_POSITIONING:
+                    pos_config = get_position_for_target('ratings', target_type, overlay_positions)
+
+                if pos_config:
                     x, y = calculate_position(ratings_overlay.width, ratings_overlay.height, target_width, target_height, pos_config)
                     print(f"  Ratings positioned at ({x}, {y}) using config")
                 else:
@@ -1004,8 +1023,11 @@ def composite_overlays(
             badge = create_status_badge(metadata['status'])
             if badge:
                 # Use dynamic positioning if available
-                if HAS_POSITIONING and 'status' in overlay_positions:
-                    pos_config = overlay_positions['status']
+                pos_config = None
+                if HAS_POSITIONING:
+                    pos_config = get_position_for_target('status', target_type, overlay_positions)
+
+                if pos_config:
                     x, y = calculate_position(badge.width, badge.height, target_width, target_height, pos_config)
                     print(f"  Status positioned at ({x}, {y}) using config")
                 else:
@@ -1019,8 +1041,11 @@ def composite_overlays(
             ribbon = create_ribbon(metadata['ribbon'])
             if ribbon:
                 # Use dynamic positioning if available
-                if HAS_POSITIONING and 'ribbon' in overlay_positions:
-                    pos_config = overlay_positions['ribbon']
+                pos_config = None
+                if HAS_POSITIONING:
+                    pos_config = get_position_for_target('ribbon', target_type, overlay_positions)
+
+                if pos_config:
                     x, y = calculate_position(ribbon.width, ribbon.height, target_width, target_height, pos_config)
                     print(f"  Ribbon positioned at ({x}, {y}) using config")
                 else:

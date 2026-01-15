@@ -13,19 +13,16 @@ def parse_overlay_positions(preview_config: Dict[str, Any], library_name: str) -
     """
     Parse overlay positioning from Kometa config for a specific library.
 
-    Returns a dict mapping overlay names to their positioning config:
+    Returns a dict mapping overlay names (with optional builder_level suffix) to their positioning config:
     {
-        'resolution': {
-            'horizontal_align': 'left',
-            'vertical_align': 'top',
-            'horizontal_offset': 0,
-            'vertical_offset': 95
-        },
-        'ratings': {
-            'horizontal_position': 'right',  # Special case
-            ...
-        }
+        'resolution': {...},           # Default (show level)
+        'resolution:season': {...},    # Season-specific
+        'resolution:episode': {...},   # Episode-specific
+        'ratings': {...},              # Default
+        'ratings:episode': {...},      # Episode-specific
     }
+
+    The key format is 'overlay_name' or 'overlay_name:builder_level' for level-specific configs.
     """
     positions = {}
 
@@ -73,13 +70,59 @@ def parse_overlay_positions(preview_config: Dict[str, Any], library_name: str) -
             position_config['horizontal_position'] = template_vars['horizontal_position']
 
         # Builder level (for show/season/episode specific overlays)
-        if 'builder_level' in template_vars:
-            position_config['builder_level'] = template_vars['builder_level']
+        builder_level = template_vars.get('builder_level')
 
         if position_config:
-            positions[overlay_name] = position_config
+            # Create key with builder_level suffix if present
+            if builder_level:
+                key = f"{overlay_name}:{builder_level}"
+            else:
+                key = overlay_name
+            positions[key] = position_config
 
     return positions
+
+
+def get_position_for_target(
+    overlay_name: str,
+    target_type: str,
+    overlay_positions: Dict[str, Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """
+    Get the appropriate position config for an overlay based on target type.
+
+    Looks up positions in this order:
+    1. overlay_name:builder_level (e.g., 'resolution:episode')
+    2. overlay_name (default, e.g., 'resolution')
+
+    Args:
+        overlay_name: Name of overlay (e.g., 'resolution', 'ratings')
+        target_type: Type of target ('movie', 'show', 'season', 'episode')
+        overlay_positions: Dict of position configs from parse_overlay_positions()
+
+    Returns:
+        Position config dict, or None if not found
+    """
+    # Map target types to builder levels
+    # Movies and shows don't have builder_level
+    # Seasons and episodes have specific builder_level keys
+    builder_level = None
+    if target_type == 'season':
+        builder_level = 'season'
+    elif target_type == 'episode':
+        builder_level = 'episode'
+
+    # Try level-specific first if applicable
+    if builder_level:
+        level_key = f"{overlay_name}:{builder_level}"
+        if level_key in overlay_positions:
+            return overlay_positions[level_key]
+
+    # Fall back to default (no builder_level)
+    if overlay_name in overlay_positions:
+        return overlay_positions[overlay_name]
+
+    return None
 
 
 def calculate_position(
