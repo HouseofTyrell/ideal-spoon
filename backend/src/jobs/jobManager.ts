@@ -13,7 +13,7 @@ import { createTmdbClient } from '../plex/tmdbClient.js';
 import { generatePreviewConfig } from '../kometa/configGenerator.js';
 import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions.js';
 
-export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type JobStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 
 export interface JobTarget {
   id: string;
@@ -503,7 +503,7 @@ class JobManager extends EventEmitter {
    */
   async cancelJob(jobId: string): Promise<boolean> {
     const meta = this.jobs.get(jobId);
-    if (!meta || meta.status !== 'running') {
+    if (!meta || (meta.status !== 'running' && meta.status !== 'paused')) {
       return false;
     }
 
@@ -513,6 +513,74 @@ class JobManager extends EventEmitter {
     }
 
     return cancelled;
+  }
+
+  /**
+   * Pause a running job
+   */
+  async pauseJob(jobId: string): Promise<boolean> {
+    const meta = this.jobs.get(jobId);
+    if (!meta || meta.status !== 'running') {
+      return false;
+    }
+
+    const paused = await this.runner.pause(jobId);
+    if (paused) {
+      await this.updateJobStatus(jobId, 'paused', meta.progress);
+      this.emit(`job:${jobId}`, {
+        type: 'progress',
+        timestamp: new Date(),
+        message: 'Job paused',
+        data: { progress: meta.progress, paused: true },
+      });
+    }
+
+    return paused;
+  }
+
+  /**
+   * Resume a paused job
+   */
+  async resumeJob(jobId: string): Promise<boolean> {
+    const meta = this.jobs.get(jobId);
+    if (!meta || meta.status !== 'paused') {
+      return false;
+    }
+
+    const resumed = await this.runner.resume(jobId);
+    if (resumed) {
+      await this.updateJobStatus(jobId, 'running', meta.progress);
+      this.emit(`job:${jobId}`, {
+        type: 'progress',
+        timestamp: new Date(),
+        message: 'Job resumed',
+        data: { progress: meta.progress, paused: false },
+      });
+    }
+
+    return resumed;
+  }
+
+  /**
+   * Get the currently active job (running or paused)
+   */
+  async getActiveJob(): Promise<JobMeta | null> {
+    // Check in-memory jobs first
+    for (const meta of this.jobs.values()) {
+      if (meta.status === 'running' || meta.status === 'paused') {
+        return meta;
+      }
+    }
+
+    // Check persisted jobs
+    const allJobs = await this.listJobs();
+    for (const job of allJobs) {
+      if (job.status === 'running' || job.status === 'paused') {
+        return job;
+      }
+    }
+
+    return null;
   }
 
   /**

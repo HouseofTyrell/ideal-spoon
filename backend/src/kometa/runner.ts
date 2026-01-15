@@ -340,6 +340,66 @@ export class KometaRunner extends EventEmitter {
   }
 
   /**
+   * Pause a running job
+   */
+  async pause(jobId: string): Promise<boolean> {
+    const container = this.runningContainers.get(jobId);
+    if (!container) {
+      return false;
+    }
+
+    try {
+      const info = await container.inspect();
+      if (!info.State.Running || info.State.Paused) {
+        return false;
+      }
+
+      await container.pause();
+
+      this.emitEvent(jobId, {
+        type: 'log',
+        timestamp: new Date(),
+        message: 'Job paused',
+      });
+
+      return true;
+    } catch (err) {
+      console.error(`Failed to pause job ${jobId}:`, err);
+      return false;
+    }
+  }
+
+  /**
+   * Resume a paused job
+   */
+  async resume(jobId: string): Promise<boolean> {
+    const container = this.runningContainers.get(jobId);
+    if (!container) {
+      return false;
+    }
+
+    try {
+      const info = await container.inspect();
+      if (!info.State.Paused) {
+        return false;
+      }
+
+      await container.unpause();
+
+      this.emitEvent(jobId, {
+        type: 'log',
+        timestamp: new Date(),
+        message: 'Job resumed',
+      });
+
+      return true;
+    } catch (err) {
+      console.error(`Failed to resume job ${jobId}:`, err);
+      return false;
+    }
+  }
+
+  /**
    * Get status of a running job
    */
   async getStatus(jobId: string): Promise<'running' | 'stopped' | 'not_found'> {

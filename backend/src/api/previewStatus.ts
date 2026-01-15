@@ -153,6 +153,97 @@ router.post('/cancel/:jobId', async (req: Request, res: Response) => {
 });
 
 /**
+ * POST /api/preview/pause/:jobId
+ * Pause a running job
+ */
+router.post('/pause/:jobId', async (req: Request, res: Response) => {
+  try {
+    const { jobId } = req.params;
+    const jobManager = getJobManager();
+
+    const paused = await jobManager.pauseJob(jobId);
+
+    if (paused) {
+      res.json({ success: true, message: 'Job paused' });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: 'Job could not be paused (may not be running)',
+      });
+    }
+
+  } catch (err) {
+    console.error('Pause error:', err);
+    res.status(500).json({
+      error: 'Failed to pause job',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * POST /api/preview/resume/:jobId
+ * Resume a paused job
+ */
+router.post('/resume/:jobId', async (req: Request, res: Response) => {
+  try {
+    const { jobId } = req.params;
+    const jobManager = getJobManager();
+
+    const resumed = await jobManager.resumeJob(jobId);
+
+    if (resumed) {
+      res.json({ success: true, message: 'Job resumed' });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: 'Job could not be resumed (may not be paused)',
+      });
+    }
+
+  } catch (err) {
+    console.error('Resume error:', err);
+    res.status(500).json({
+      error: 'Failed to resume job',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
+/**
+ * GET /api/preview/active
+ * Get the currently active (running or paused) job
+ */
+router.get('/active', async (req: Request, res: Response) => {
+  try {
+    const jobManager = getJobManager();
+    const activeJob = await jobManager.getActiveJob();
+
+    if (activeJob) {
+      res.json({
+        hasActiveJob: true,
+        job: {
+          jobId: activeJob.jobId,
+          status: activeJob.status,
+          progress: activeJob.progress,
+          createdAt: activeJob.createdAt,
+          updatedAt: activeJob.updatedAt,
+        },
+      });
+    } else {
+      res.json({ hasActiveJob: false, job: null });
+    }
+
+  } catch (err) {
+    console.error('Get active job error:', err);
+    res.status(500).json({
+      error: 'Failed to get active job',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
+/**
  * GET /api/preview/jobs
  * List all jobs
  */

@@ -23,6 +23,7 @@ export const JOB_POLL_INTERVAL_MS = 2000; // 2 seconds
 export const JOB_STATUS = {
   PENDING: 'pending',
   RUNNING: 'running',
+  PAUSED: 'paused',
   COMPLETED: 'completed',
   FAILED: 'failed',
   CANCELLED: 'cancelled',

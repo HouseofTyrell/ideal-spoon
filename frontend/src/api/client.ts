@@ -14,7 +14,7 @@ export interface ConfigAnalysis {
 }
 
 // Job status values - must match backend/src/constants.ts
-export type JobStatusValue = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type JobStatusValue = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 
 export interface JobStatus {
   jobId: string;
@@ -325,6 +325,47 @@ export async function cancelJob(jobId: string): Promise<void> {
     const error = await response.json();
     throw new Error(error.details || error.error || 'Failed to cancel job');
   }
+}
+
+/**
+ * Pause a running job
+ */
+export async function pauseJob(jobId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/preview/pause/${jobId}`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.details || error.error || 'Failed to pause job');
+  }
+}
+
+/**
+ * Resume a paused job
+ */
+export async function resumeJob(jobId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/preview/resume/${jobId}`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.details || error.error || 'Failed to resume job');
+  }
+}
+
+/**
+ * Get the currently active (running or paused) job
+ */
+export async function getActiveJob(): Promise<{ hasActiveJob: boolean; job: { jobId: string; status: JobStatusValue; progress: number } | null }> {
+  const response = await fetch(`${API_BASE}/preview/active`);
+
+  if (!response.ok) {
+    throw new Error('Failed to get active job');
+  }
+
+  return response.json();
 }
 
 /**
