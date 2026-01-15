@@ -250,23 +250,89 @@ def create_resolution_badge(resolution: str) -> Image.Image:
     return create_badge(display_text, text_color=text_color, font_size=50)
 
 
+def create_combined_resolution_hdr_badge(
+    resolution: str,
+    hdr: bool = False,
+    dolby_vision: bool = False
+) -> Image.Image:
+    """
+    Create a combined resolution + HDR/DV badge.
+
+    This matches Kometa's behavior of combining resolution and HDR info
+    into a single badge (e.g., "4K DV" instead of separate "4K" and "DV" badges).
+
+    Args:
+        resolution: Resolution string (4K, 1080p, etc.)
+        hdr: Whether HDR is present
+        dolby_vision: Whether Dolby Vision is present
+
+    Returns:
+        Combined badge image
+    """
+    # Build the combined text
+    display_text = resolution.upper() if resolution.lower() in ['4k'] else resolution
+
+    if dolby_vision:
+        display_text = f"{display_text} DV"
+        # Use cyan color for DV text portion
+        # For now, use single color - we'll enhance later with multi-color support
+        return create_badge(display_text, text_color='#00D4AA', font_size=45, width=350)
+    elif hdr:
+        display_text = f"{display_text} HDR"
+        return create_badge(display_text, text_color='#FFD700', font_size=45, width=350)
+    else:
+        # Just resolution, no HDR
+        resolution_colors = {
+            '4K': '#FFD700',
+            '4k': '#FFD700',
+            '1080p': '#4CAF50',
+            '1080': '#4CAF50',
+            '720p': '#2196F3',
+            '720': '#2196F3',
+            '480p': '#9E9E9E',
+            '480': '#9E9E9E',
+        }
+        text_color = resolution_colors.get(resolution, '#FFFFFF')
+        return create_badge(display_text, text_color=text_color, font_size=50)
+
+
 def create_audio_badge(audio_codec: str) -> Image.Image:
-    """Create an audio codec badge."""
-    # Map codec names to display text
-    codec_display = {
-        'Dolby Atmos': 'ATMOS',
-        'TrueHD': 'TrueHD',
-        'DTS-HD MA': 'DTS-HD',
-        'DTS-HD': 'DTS-HD',
-        'DTS': 'DTS',
-        'AAC': 'AAC',
-        'AC3': 'AC3',
-        'EAC3': 'EAC3',
-        'FLAC': 'FLAC',
+    """
+    Create an audio codec badge with brand-appropriate styling.
+
+    Since audio codec logo PNGs aren't available, we create styled text badges
+    that match Kometa's visual design.
+    """
+    # Map codec names to display text and styling
+    codec_configs = {
+        'Dolby Atmos': {'text': 'ATMOS', 'width': 305, 'height': 105, 'font_size': 40},
+        'Atmos': {'text': 'ATMOS', 'width': 305, 'height': 105, 'font_size': 40},
+        'TrueHD': {'text': 'TrueHD', 'width': 305, 'height': 105, 'font_size': 40},
+        'DTS-HD MA': {'text': 'DTS-HD MA', 'width': 305, 'height': 105, 'font_size': 35},
+        'DTS-HD': {'text': 'DTS-HD', 'width': 305, 'height': 105, 'font_size': 40},
+        'DTS': {'text': 'DTS', 'width': 305, 'height': 105, 'font_size': 45},
+        'AAC': {'text': 'AAC', 'width': 305, 'height': 105, 'font_size': 45},
+        'AC3': {'text': 'AC3', 'width': 305, 'height': 105, 'font_size': 45},
+        'EAC3': {'text': 'EAC3', 'width': 305, 'height': 105, 'font_size': 40},
+        'FLAC': {'text': 'FLAC', 'width': 305, 'height': 105, 'font_size': 45},
     }
 
-    display_text = codec_display.get(audio_codec, audio_codec.upper())
-    return create_badge(display_text, font_size=40)
+    config = codec_configs.get(audio_codec, {
+        'text': audio_codec.upper(),
+        'width': 305,
+        'height': 105,
+        'font_size': 40
+    })
+
+    return create_badge(
+        config['text'],
+        width=config['width'],
+        height=config['height'],
+        font_size=config['font_size'],
+        bg_color='#000000',
+        text_color='#FFFFFF',
+        bg_alpha=200
+    )
 
 
 def create_hdr_badge(hdr: bool = False, dolby_vision: bool = False) -> Optional[Image.Image]:
@@ -743,12 +809,15 @@ def composite_overlays(
         bottom_left_y = POSTER_HEIGHT - BADGE_HEIGHT - BADGE_PADDING
         bottom_right_y = POSTER_HEIGHT - BADGE_HEIGHT - BADGE_PADDING
 
-        # Resolution badge (top-left)
+        # Combined Resolution + HDR badge (top-left)
+        # Kometa combines these into a single badge like "4K DV" instead of stacking separately
         if metadata.get('resolution'):
-            if use_png_assets:
-                badge = create_resolution_overlay_png(metadata['resolution'])
-            else:
-                badge = create_resolution_badge(metadata['resolution'])
+            # Create combined badge (resolution + HDR/DV if present)
+            badge = create_combined_resolution_hdr_badge(
+                metadata['resolution'],
+                hdr=metadata.get('hdr', False),
+                dolby_vision=metadata.get('dolbyVision', False)
+            )
             if badge:
                 img.paste(badge, (BADGE_PADDING, top_left_y), badge)
                 top_left_y += badge.height + 5
@@ -762,21 +831,6 @@ def composite_overlays(
             if badge:
                 img.paste(badge, (BADGE_PADDING, top_left_y), badge)
                 top_left_y += badge.height + 5
-
-        # HDR/DV badge (below audio)
-        if use_png_assets:
-            hdr_badge = create_hdr_overlay_png(
-                metadata.get('hdr', False),
-                metadata.get('dolbyVision', False)
-            )
-        else:
-            hdr_badge = create_hdr_badge(
-                metadata.get('hdr', False),
-                metadata.get('dolbyVision', False)
-            )
-        if hdr_badge:
-            img.paste(hdr_badge, (BADGE_PADDING, top_left_y), hdr_badge)
-            top_left_y += hdr_badge.height + 5
 
         # Streaming services (top-right)
         if metadata.get('streaming'):
