@@ -328,6 +328,21 @@ export async function cancelJob(jobId: string): Promise<void> {
 }
 
 /**
+ * Force delete a stuck job
+ * Use this when a job is stuck and won't respond to normal cancellation
+ */
+export async function forceDeleteJob(jobId: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/preview/force/${jobId}`, {
+    method: 'DELETE',
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.details || error.error || 'Failed to force delete job');
+  }
+}
+
+/**
  * Pause a running job
  */
 export async function pauseJob(jobId: string): Promise<void> {

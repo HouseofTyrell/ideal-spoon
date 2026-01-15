@@ -11,6 +11,7 @@ import {
   pauseJob,
   resumeJob,
   cancelJob,
+  forceDeleteJob,
   JobStatus,
   JobArtifacts,
   JobEvent,
@@ -128,6 +129,24 @@ function PreviewPage({
       setStatus(statusResult)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to stop job')
+    }
+  }
+
+  const handleForceStop = async () => {
+    if (!jobId) return
+    if (!confirm('Force stop will immediately terminate this job. Use this only if normal stop doesn\'t work. Continue?')) {
+      return
+    }
+    try {
+      await forceDeleteJob(jobId)
+      setIsRunning(false)
+      setIsPaused(false)
+      setLogs((prev) => [...prev, { type: 'log', timestamp: new Date().toISOString(), message: 'Job forcefully terminated' }])
+      // Fetch final status
+      const statusResult = await getJobStatus(jobId)
+      setStatus(statusResult)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to force stop job')
     }
   }
 
@@ -288,6 +307,14 @@ function PreviewPage({
                 title="Stop and cancel the job"
               >
                 Stop
+              </button>
+              <button
+                className="btn btn-danger"
+                onClick={handleForceStop}
+                title="Force terminate stuck job (use if Stop doesn't work)"
+                style={{ opacity: 0.8 }}
+              >
+                Force Stop
               </button>
             </>
           )}

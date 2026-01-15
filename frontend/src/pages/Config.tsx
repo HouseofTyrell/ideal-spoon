@@ -3,7 +3,7 @@ import ConfigUploader from '../components/ConfigUploader'
 import PlexCredentialsForm from '../components/PlexCredentialsForm'
 import OverlayEditor from '../components/OverlayEditor'
 import TemplateSelector from '../components/TemplateSelector'
-import { ConfigAnalysis, runSystemAction, SystemAction, SystemActionResult } from '../api/client'
+import { ConfigAnalysis } from '../api/client'
 import { OverlayTemplate } from '../data/overlayTemplates'
 import { OverlayConfig } from '../types/overlayConfig'
 import './Config.css'
@@ -24,9 +24,6 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
   const [entryMode, setEntryMode] = useState<EntryMode>(currentConfig ? 'import' : 'choice')
   const [analysis, setAnalysis] = useState<ConfigAnalysis | null>(null)
   const [configYaml, setConfigYaml] = useState(currentConfig)
-  const [systemAction, setSystemAction] = useState<SystemAction | null>(null)
-  const [systemResult, setSystemResult] = useState<SystemActionResult | null>(null)
-  const [systemError, setSystemError] = useState<string | null>(null)
   const [showTemplateSelector, setShowTemplateSelector] = useState(false)
   const [initialOverlays, setInitialOverlays] = useState<OverlayConfig[]>([])
 
@@ -83,20 +80,6 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
     setConfigYaml('')
     setShowTemplateSelector(false)
     setInitialOverlays([])
-  }
-
-  const triggerSystemAction = async (action: SystemAction) => {
-    setSystemAction(action)
-    setSystemResult(null)
-    setSystemError(null)
-    try {
-      const result = await runSystemAction(action)
-      setSystemResult(result)
-    } catch (err) {
-      setSystemError(err instanceof Error ? err.message : 'Failed to run system action')
-    } finally {
-      setSystemAction(null)
-    }
   }
 
   // Show entry mode choice if no config loaded yet
@@ -312,72 +295,6 @@ function ConfigPage({ currentConfig, onConfigUpdate }: ConfigPageProps) {
         </div>
 
         <div className="config-sidebar">
-          <div className="card">
-            <h2 className="card-title">System Controls</h2>
-            <p className="text-muted text-sm">
-              Control Docker services directly from the UI.
-            </p>
-
-            <div className="system-controls">
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => triggerSystemAction('start')}
-                disabled={systemAction !== null}
-              >
-                {systemAction === 'start' ? 'Starting…' : 'Start'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => triggerSystemAction('stop')}
-                disabled={systemAction !== null}
-              >
-                {systemAction === 'stop' ? 'Stopping…' : 'Stop'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => triggerSystemAction('reset')}
-                disabled={systemAction !== null}
-              >
-                {systemAction === 'reset' ? 'Resetting…' : 'Reset'}
-              </button>
-            </div>
-
-            {systemError && (
-              <div className="alert alert-error mt-2">
-                {systemError}
-              </div>
-            )}
-
-            {systemResult && (
-              <div className="system-result">
-                <div className="system-result-header">
-                  <span className="system-result-title">
-                    {systemResult.action.toUpperCase()} result
-                  </span>
-                  <span
-                    className={`system-result-status ${
-                      systemResult.status === 'success' ? 'text-success' : 'text-error'
-                    }`}
-                  >
-                    {systemResult.status}
-                  </span>
-                </div>
-                <div className="system-result-meta">
-                  <span>Exit code: {systemResult.exitCode ?? 'unknown'}</span>
-                  <span>Started: {new Date(systemResult.startedAt).toLocaleString()}</span>
-                </div>
-                {(systemResult.stdout || systemResult.stderr) && (
-                  <pre className="system-log">
-                    {systemResult.stdout}
-                    {systemResult.stderr && `\n${systemResult.stderr}`}
-                  </pre>
-                )}
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </div>

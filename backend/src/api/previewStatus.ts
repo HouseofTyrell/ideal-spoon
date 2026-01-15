@@ -153,6 +153,36 @@ router.post('/cancel/:jobId', async (req: Request, res: Response) => {
 });
 
 /**
+ * DELETE /api/preview/force/:jobId
+ * Force delete a stuck job by marking it as failed
+ * Use this when a job is stuck in "running" state and won't respond to cancel
+ */
+router.delete('/force/:jobId', async (req: Request, res: Response) => {
+  try {
+    const { jobId } = req.params;
+    const jobManager = getJobManager();
+
+    const forced = await jobManager.forceFailJob(jobId);
+
+    if (forced) {
+      res.json({ success: true, message: 'Job forcefully marked as failed' });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'Job not found',
+      });
+    }
+
+  } catch (err) {
+    console.error('Force delete error:', err);
+    res.status(500).json({
+      error: 'Failed to force delete job',
+      details: err instanceof Error ? err.message : 'Unknown error',
+    });
+  }
+});
+
+/**
  * POST /api/preview/pause/:jobId
  * Pause a running job
  */

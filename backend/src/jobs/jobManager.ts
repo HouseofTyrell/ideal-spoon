@@ -563,6 +563,48 @@ class JobManager extends EventEmitter {
   }
 
   /**
+   * Force fail a stuck job
+   * This forcefully marks a job as failed without waiting for container cleanup
+   * Use this when a job is stuck and won't respond to normal cancellation
+   */
+  async forceFailJob(jobId: string): Promise<boolean> {
+    const meta = this.jobs.get(jobId);
+    if (!meta) {
+      return false;
+    }
+
+    // Only force-fail jobs that are in problematic states
+    if (meta.status !== 'running' && meta.status !== 'paused' && meta.status !== 'pending') {
+      return false;
+    }
+
+    // Try to cancel the container if it exists
+    try {
+      await this.runner.cancel(jobId);
+    } catch (err) {
+      // Ignore errors - we're forcing this to fail regardless
+      console.warn(`Force fail: Could not cancel container for ${jobId}:`, err);
+    }
+
+    // Update status to failed
+    await this.updateJobStatus(jobId, 'failed', 100);
+    meta.error = 'Job forcefully terminated by user';
+    meta.completedAt = new Date().toISOString();
+
+    // Update job meta file
+    await this.saveJobMeta(jobId, meta);
+
+    this.emit(`job:${jobId}`, {
+      type: 'error',
+      timestamp: new Date(),
+      message: 'Job forcefully terminated',
+      data: { error: meta.error },
+    });
+
+    return true;
+  }
+
+  /**
    * Get the currently active job (running or paused)
    */
   async getActiveJob(): Promise<JobMeta | null> {
