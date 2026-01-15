@@ -52,8 +52,8 @@ services:
   # The backend spawns renderer containers on-demand for each preview job.
   kometa-renderer-build:
     build:
-      context: ./renderer
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: renderer/Dockerfile
       args:
         - KOMETA_IMAGE_TAG=${KOMETA_IMAGE_TAG:-v2.2.2}
     image: kometa-preview-renderer:latest
