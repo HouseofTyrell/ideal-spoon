@@ -46,6 +46,8 @@ from constants import (
     TMDB_PROXY_ENABLED,
     FAST_MODE,
     OUTPUT_CACHE_ENABLED,
+    PARALLEL_KOMETA_ENABLED,
+    FAST_PATH_ENABLED,
 )
 from fonts import validate_fonts_at_startup, ensure_font_fallbacks
 from caching import (
@@ -53,6 +55,14 @@ from caching import (
     check_cached_outputs,
     save_cache_hash,
     use_cached_outputs,
+    get_cached_outputs_for_targets,
+    merge_cached_and_new_outputs,
+)
+from overlay_fingerprints import (
+    determine_targets_needing_render,
+    save_target_fingerprints,
+    filter_preview_config_for_targets,
+    detect_overlay_complexity,
 )
 from xml_builders import extract_allowed_rating_keys
 from proxy_plex import PlexProxy
@@ -66,7 +76,7 @@ from config import (
     generate_proxy_config,
     redact_yaml_snippet,
 )
-from kometa_runner import run_kometa
+from kometa_runner import run_kometa, run_kometa_parallel
 from export import export_overlay_outputs, export_local_preview_artifacts
 
 
@@ -170,6 +180,64 @@ def main():
     else:
         config_hash = None
         logger.info("Output caching disabled (PREVIEW_OUTPUT_CACHE=0)")
+
+    # ================================================================
+    # Granular Per-Overlay Caching Check
+    # Determine which specific targets need re-rendering based on
+    # overlay fingerprints. This allows partial cache hits.
+    # ================================================================
+    targets_to_render: List[str] = []
+    cached_target_ids: List[str] = []
+    target_fingerprints: Dict[str, str] = {}
+    use_granular_cache = False
+
+    if OUTPUT_CACHE_ENABLED:
+        logger.info("=" * 60)
+        logger.info("Checking per-overlay fingerprints for granular caching...")
+        logger.info("=" * 60)
+
+        targets_to_render, cached_target_ids, target_fingerprints = (
+            determine_targets_needing_render(job_path, preview_config)
+        )
+
+        if not targets_to_render and cached_target_ids:
+            # All targets are cached - instant return
+            logger.info("=" * 60)
+            logger.info("GRANULAR CACHE HIT - All targets cached (instant return)")
+            logger.info("=" * 60)
+
+            cached_files = get_cached_outputs_for_targets(job_path, cached_target_ids)
+
+            summary = {
+                'timestamp': datetime.now().isoformat(),
+                'success': True,
+                'cached': True,
+                'granular_cache': True,
+                'cached_targets': cached_target_ids,
+                'config_hash': config_hash,
+                'target_fingerprints': target_fingerprints,
+                'exported_files': cached_files,
+                'output_files': [Path(f).name for f in cached_files.values()],
+            }
+            summary_path = output_dir / 'summary.json'
+            with open(summary_path, 'w') as f:
+                json.dump(summary, f, indent=2)
+
+            logger.info(f"Returning {len(cached_files)} cached outputs")
+            sys.exit(0)
+
+        elif cached_target_ids:
+            # Partial cache hit - only render changed targets
+            logger.info(f"PARTIAL CACHE HIT - {len(cached_target_ids)} cached, "
+                       f"{len(targets_to_render)} need rendering")
+            use_granular_cache = True
+
+            # Filter config to only include targets that need rendering
+            preview_config = filter_preview_config_for_targets(
+                preview_config, targets_to_render
+            )
+        else:
+            logger.info("No cached targets - full render required")
 
     # Extract Plex connection info
     plex_config = preview_config.get('plex', {})
@@ -286,40 +354,92 @@ def main():
             logger.warning(f"Draft preview failed (continuing with Kometa): {e}")
 
         # ================================================================
-        # PHASE 2: Full Kometa Render
+        # FAST PATH CHECK: Skip Kometa for simple overlays
+        # If overlays only use static metadata (resolution, audio, HDR),
+        # we can use the instant compositor output directly.
+        #
+        # NOTE: Fast path is DISABLED BY DEFAULT because the instant
+        # compositor creates simplified text badges that look different
+        # from Kometa's production overlays (which use PNG image assets,
+        # advanced styling, network logos, etc.).
+        # ================================================================
+        use_fast_path = False
+        if FAST_PATH_ENABLED and draft_result == 0:
+            overlay_complexity = detect_overlay_complexity(preview_config, job_path)
+            if overlay_complexity == 'simple':
+                logger.info("=" * 60)
+                logger.info("FAST PATH: Overlays use only static metadata")
+                logger.info("Skipping Kometa - using instant compositor results")
+                logger.warning("NOTE: Fast path output uses simplified text badges.")
+                logger.warning("      It will look different from Kometa's styled overlays.")
+                logger.info("=" * 60)
+                use_fast_path = True
+
+                # Copy draft outputs to final output location
+                import shutil
+                draft_dir = output_dir / 'draft'
+                for draft_file in draft_dir.glob('*_draft.png'):
+                    target_id = draft_file.stem.replace('_draft', '')
+                    final_file = output_dir / f"{target_id}_after.png"
+                    shutil.copy(draft_file, final_file)
+                    logger.info(f"  Fast path output: {final_file.name}")
+
+        # ================================================================
+        # PHASE 2: Full Kometa Render (skip if using fast path)
         # Run real Kometa for accurate, production-quality overlays
         # ================================================================
+        if use_fast_path:
+            # Skip Kometa, use instant compositor results
+            exit_code = 0
+            blocked_requests = []
+            captured_uploads = []
+            filtered_requests = []
+            mock_list_requests = []
+            forward_count = 0
+            blocked_metadata_count = 0
+            learned_parents = set()
+            request_log = []
+            sections_get_count = 0
+            metadata_get_count = 0
+            zero_match_searches = 0
+            type_mismatches = []
+        else:
+            # Generate config that points to our proxy
+            kometa_config_path = generate_proxy_config(job_path, preview_config, proxy.proxy_url)
 
-        # Generate config that points to our proxy
-        kometa_config_path = generate_proxy_config(job_path, preview_config, proxy.proxy_url)
+            # Run Kometa
+            logger.info("=" * 60)
+            logger.info("Phase 2: Starting Kometa for accurate render...")
+            logger.info("=" * 60)
 
-        # Run Kometa
-        logger.info("=" * 60)
-        logger.info("Phase 2: Starting Kometa for accurate render...")
-        logger.info("=" * 60)
+            tmdb_proxy_url = tmdb_proxy.proxy_url if tmdb_proxy else None
+            logger.info(f"Launching Kometa with config={kometa_config_path} plex_url={proxy.proxy_url}")
 
-        tmdb_proxy_url = tmdb_proxy.proxy_url if tmdb_proxy else None
-        logger.info(f"Launching Kometa with config={kometa_config_path} plex_url={proxy.proxy_url}")
-        exit_code = run_kometa(kometa_config_path, tmdb_proxy_url=tmdb_proxy_url)
+            # Use parallel execution if enabled and we have mixed library types
+            if PARALLEL_KOMETA_ENABLED:
+                logger.info("Parallel Kometa execution enabled (PREVIEW_PARALLEL_KOMETA=1)")
+                exit_code = run_kometa_parallel(kometa_config_path, tmdb_proxy_url=tmdb_proxy_url)
+            else:
+                exit_code = run_kometa(kometa_config_path, tmdb_proxy_url=tmdb_proxy_url)
 
-        logger.info("=" * 60)
-        logger.info(f"Kometa finished with exit code: {exit_code}")
-        logger.info("=" * 60)
+            logger.info("=" * 60)
+            logger.info(f"Kometa finished with exit code: {exit_code}")
+            logger.info("=" * 60)
 
-        # Get captured data
-        blocked_requests = proxy.get_blocked_requests()
-        captured_uploads = proxy.get_captured_uploads()
-        filtered_requests = proxy.get_filtered_requests()
-        mock_list_requests = proxy.get_mock_list_requests()
-        forward_count = proxy.get_forward_request_count()
-        blocked_metadata_count = proxy.get_blocked_metadata_count()
-        learned_parents = proxy.get_learned_parent_keys()
-        request_log = proxy.get_request_log()
-        sections_get_count = proxy.get_sections_get_count()
-        metadata_get_count = proxy.get_metadata_get_count()
-        # H3/H4: Get diagnostic data
-        zero_match_searches = proxy.get_zero_match_searches()
-        type_mismatches = proxy.get_type_mismatches()
+            # Get captured data
+            blocked_requests = proxy.get_blocked_requests()
+            captured_uploads = proxy.get_captured_uploads()
+            filtered_requests = proxy.get_filtered_requests()
+            mock_list_requests = proxy.get_mock_list_requests()
+            forward_count = proxy.get_forward_request_count()
+            blocked_metadata_count = proxy.get_blocked_metadata_count()
+            learned_parents = proxy.get_learned_parent_keys()
+            request_log = proxy.get_request_log()
+            sections_get_count = proxy.get_sections_get_count()
+            metadata_get_count = proxy.get_metadata_get_count()
+            # H3/H4: Get diagnostic data
+            zero_match_searches = proxy.get_zero_match_searches()
+            type_mismatches = proxy.get_type_mismatches()
 
         logger.info(f"Blocked {len(blocked_requests)} write attempts")
         logger.info(f"Captured {len(captured_uploads)} uploads")
@@ -329,8 +449,8 @@ def main():
             if req.get('method') == 'GET' and re.match(r'^/library/sections/\d+/all$', req.get('path_base', ''))
         )
 
-        # Traffic sanity check: ensure proxy is in the request path
-        if sections_get_count == 0 and metadata_get_count == 0 and sections_all_count == 0:
+        # Traffic sanity check: ensure proxy is in the request path (skip for fast path)
+        if not use_fast_path and sections_get_count == 0 and metadata_get_count == 0 and sections_all_count == 0:
             logger.error("PROXY_TRAFFIC_SANITY_FAILED: missing expected Plex GET traffic")
             logger.error(f"  /library/sections GETs: {sections_get_count}")
             logger.error(f"  /library/metadata/* GETs: {metadata_get_count}")
@@ -393,8 +513,18 @@ def main():
                 if target_id in missing_targets:
                     missing_targets.remove(target_id)
 
+        # Merge with cached outputs if using granular caching
+        if use_granular_cache and cached_target_ids:
+            exported_files = merge_cached_and_new_outputs(
+                job_path, cached_target_ids, exported_files
+            )
+            # Remove cached targets from missing list
+            missing_targets = [t for t in missing_targets if t not in cached_target_ids]
+            logger.info(f"Merged {len(cached_target_ids)} cached outputs with "
+                       f"{len(exported_files) - len(cached_target_ids)} new renders")
+
         no_capture_error = False
-        if not successful_captures and not local_artifacts and targets:
+        if not successful_captures and not local_artifacts and targets and not cached_target_ids:
             no_capture_error = True
             logger.error("NO_CAPTURE_OUTPUTS: No uploads captured and no local artifacts found.")
             if request_log:
@@ -440,6 +570,10 @@ def main():
             'timestamp': datetime.now().isoformat(),
             'success': render_success,
             'cached': False,
+            'granular_cache': use_granular_cache,
+            'cached_targets': cached_target_ids if use_granular_cache else [],
+            'rendered_targets': targets_to_render if use_granular_cache else [],
+            'target_fingerprints': target_fingerprints,
             'config_hash': config_hash,
             'kometa_exit_code': exit_code,
             'blocked_write_attempts': blocked_requests,
@@ -511,13 +645,32 @@ def main():
         if render_success and config_hash:
             save_cache_hash(job_path, config_hash)
 
-        # P0 Safety Check: If we have targets but no captured uploads, provide actionable error
+        # Save target fingerprints for granular caching
+        if render_success and target_fingerprints:
+            save_target_fingerprints(job_path, target_fingerprints)
+            logger.info(f"Saved fingerprints for {len(target_fingerprints)} targets")
+
+        # P0 Safety Check: If we have targets but no output via any method, provide actionable error
+        # Skip this check if we have:
+        # - Cached targets covering the outputs
+        # - Local artifacts created (direct file writes)
+        # - Fast path mode (using instant compositor)
         targets_count = len(preview_targets) if preview_targets else 0
-        if targets_count > 0 and len(successful_captures) == 0:
+        targets_needing_capture = targets_count - len(cached_target_ids) if use_granular_cache else targets_count
+        has_local_artifacts = len(local_artifacts) > 0
+        has_upload_captures = len(successful_captures) > 0
+
+        # Only show upload capture failure if we have no output via ANY method
+        if (targets_needing_capture > 0 and
+            not has_upload_captures and
+            not has_local_artifacts and
+            not use_fast_path):
             logger.error("=" * 60)
-            logger.error("UPLOAD CAPTURE FAILURE - No images were captured!")
+            logger.error("OUTPUT GENERATION FAILURE - No images were generated!")
             logger.error("=" * 60)
             logger.error(f"Targets: {targets_count}")
+            logger.error(f"Upload captures: {len(successful_captures)}")
+            logger.error(f"Local artifacts: {len(local_artifacts)}")
             logger.error(f"Total blocked requests: {len(blocked_requests)}")
             logger.error(f"Total capture attempts: {len(captured_uploads)}")
 
@@ -534,7 +687,7 @@ def main():
                     )
             else:
                 logger.error("No PUT/POST requests were received by the proxy!")
-                logger.error("Check if Kometa is actually sending upload requests.")
+                logger.error("Kometa may be writing directly to disk (local artifact mode).")
 
             # Show failed captures
             if failed_captures:
@@ -547,13 +700,26 @@ def main():
             logger.error("=" * 60)
 
         # Report results
+        # Count output files from all sources:
+        # 1. Exported files (*_after.*)
+        # 2. Local artifacts in output/previews/
+        # 3. Fast path files
         output_count = len(list(output_dir.glob('*_after.*')))
-        if output_count > 0 and len(missing_targets) == 0 and not no_capture_error:
-            logger.info(f"Preview rendering complete: {output_count} images generated")
+        preview_count = len(list((output_dir / 'previews').glob('*__*.png'))) if (output_dir / 'previews').exists() else 0
+        total_output_count = output_count + preview_count + len(local_artifacts)
+        # Determine success based on total outputs from all sources
+        if total_output_count > 0 and len(missing_targets) == 0 and not no_capture_error:
+            logger.info(f"Preview rendering complete: {total_output_count} images generated")
+            if output_count > 0:
+                logger.info(f"  - {output_count} via upload capture")
+            if preview_count > 0:
+                logger.info(f"  - {preview_count} via local artifact")
+            if len(local_artifacts) > 0 and preview_count == 0:
+                logger.info(f"  - {len(local_artifacts)} via local artifact export")
             final_exit = 0
-        elif output_count > 0:
+        elif total_output_count > 0:
             logger.warning(
-                f"Preview rendering partial: {output_count} images generated, "
+                f"Preview rendering partial: {total_output_count} images generated, "
                 f"{len(missing_targets)} targets missing"
             )
             final_exit = 1
@@ -563,6 +729,7 @@ def main():
             if targets_count > 0:
                 logger.error(f"  - {targets_count} targets were expected")
                 logger.error(f"  - {len(blocked_requests)} write requests were blocked")
+                logger.error(f"  - {len(local_artifacts)} local artifacts found")
                 logger.error(f"  - {len(successful_captures)} images were captured")
                 logger.error("  Check logs above for UPLOAD_CAPTURED or UPLOAD_IGNORED messages")
             final_exit = 1
