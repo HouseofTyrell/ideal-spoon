@@ -418,6 +418,167 @@ def _composite_target(
     return (target_id, success)
 
 
+def run_manual_preview(
+    job_path: Path,
+    manual_overlays: Dict[str, Any]
+) -> int:
+    """
+    Run manual preview compositor with user-selected overlays.
+
+    This function creates overlays based on explicit user selections,
+    not the full metadata. It only applies overlays that the user
+    has explicitly enabled in the UI.
+
+    Args:
+        job_path: Path to job directory
+        manual_overlays: Dict of overlay selections from ManualBuilderConfig
+            - resolution: bool
+            - audio_codec: bool
+            - hdr: bool
+            - ratings: bool
+            - streaming: bool
+            - network: bool
+            - studio: bool
+            - status: bool
+            - ribbon: { imdb_top_250: bool, ... }
+
+    Returns:
+        Exit code (0 for success)
+    """
+    print("=" * 60)
+    print("Manual Preview Compositor")
+    print("Creating overlays based on user selections...")
+    print("=" * 60)
+
+    try:
+        config = load_preview_config(job_path)
+    except Exception as e:
+        print(f"ERROR: Failed to load config: {e}")
+        return 1
+
+    preview = config.get('preview', {})
+    targets = preview.get('targets', [])
+
+    if not targets:
+        print("No preview targets found")
+        return 1
+
+    output_dir = job_path / 'output'
+    draft_dir = output_dir / 'draft'
+    draft_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pre-warm font cache
+    for size in [40, 45, 50]:
+        _get_cached_font(size)
+
+    # Pre-process input images
+    preprocessed = preprocess_input_images(job_path)
+    if preprocessed > 0:
+        print(f"Pre-processed {preprocessed} input images")
+
+    # Filter targets with metadata
+    valid_targets = [t for t in targets if t.get('metadata')]
+    print(f"Processing {len(valid_targets)} targets with manual overlay selections...")
+
+    # Log enabled overlays
+    enabled_overlays = [k for k, v in manual_overlays.items() if v and k != 'ribbon']
+    ribbon_config = manual_overlays.get('ribbon', {})
+    enabled_ribbons = [k for k, v in ribbon_config.items() if v] if isinstance(ribbon_config, dict) else []
+    print(f"Enabled overlays: {enabled_overlays}")
+    if enabled_ribbons:
+        print(f"Enabled ribbons: {enabled_ribbons}")
+
+    success_count = 0
+
+    # Process targets with filtered metadata
+    with ThreadPoolExecutor(max_workers=MAX_COMPOSITE_WORKERS) as executor:
+        futures = {
+            executor.submit(
+                _composite_manual_target,
+                target,
+                job_path,
+                draft_dir,
+                manual_overlays
+            ): target
+            for target in valid_targets
+        }
+
+        for future in as_completed(futures):
+            target = futures[future]
+            target_id = target.get('id', 'unknown')
+            title = target.get('title', target_id)
+
+            try:
+                tid, success = future.result()
+                if success:
+                    success_count += 1
+                    print(f"  [OK] {title}")
+                else:
+                    print(f"  [FAIL] {title}")
+            except Exception as e:
+                print(f"  [ERROR] {title}: {e}")
+
+    print(f"\n{'=' * 60}")
+    print(f"Manual preview complete: {success_count}/{len(valid_targets)} images created")
+    print("=" * 60)
+
+    return 0 if success_count > 0 else 1
+
+
+def _composite_manual_target(
+    target: Dict[str, Any],
+    job_path: Path,
+    draft_dir: Path,
+    manual_overlays: Dict[str, Any]
+) -> Tuple[str, bool]:
+    """
+    Composite a single target with manual overlay selections.
+
+    Only applies overlays that are explicitly enabled in manual_overlays.
+    """
+    target_id = target.get('id', 'unknown')
+    target_type = target.get('type', 'movie')
+    metadata = target.get('metadata', {})
+
+    if not metadata:
+        return (target_id, False)
+
+    # Filter metadata based on manual overlay selections
+    filtered_metadata: Dict[str, Any] = {}
+
+    # Resolution
+    if manual_overlays.get('resolution') and metadata.get('resolution'):
+        filtered_metadata['resolution'] = metadata['resolution']
+
+    # Audio codec
+    if manual_overlays.get('audio_codec') and metadata.get('audioCodec'):
+        filtered_metadata['audioCodec'] = metadata['audioCodec']
+
+    # HDR
+    if manual_overlays.get('hdr'):
+        if metadata.get('hdr'):
+            filtered_metadata['hdr'] = metadata['hdr']
+        if metadata.get('dolbyVision'):
+            filtered_metadata['dolbyVision'] = metadata['dolbyVision']
+
+    # Status (TV shows only)
+    if manual_overlays.get('status') and metadata.get('status'):
+        filtered_metadata['status'] = metadata['status']
+
+    # Ribbons
+    ribbon_config = manual_overlays.get('ribbon', {})
+    if isinstance(ribbon_config, dict):
+        if ribbon_config.get('imdb_top_250') and metadata.get('ribbon') == 'imdb_top_250':
+            filtered_metadata['ribbon'] = 'imdb_top_250'
+
+    # If no overlays selected, create image without any badges
+    input_path = get_input_image_path(job_path, target_id)
+    output_path = draft_dir / f"{target_id}_draft.png"
+
+    success = composite_overlays(input_path, output_path, filtered_metadata, target_type)
+    return (target_id, success)
+
+
 def run_instant_preview(job_path: Path) -> int:
     """
     Run instant preview compositor for all targets.

@@ -10,6 +10,74 @@ export interface MediaTypeFilters {
   episodes: boolean;
 }
 
+/**
+ * Manual builder configuration for fast preview rendering.
+ *
+ * When enabled, bypasses Kometa's external builders (IMDb, TMDb, Trakt, etc.)
+ * and directly applies selected overlays to preview targets using their
+ * hardcoded metadata. This reduces preview time from 30-60+ seconds to ~2 seconds.
+ *
+ * Example: Instead of Kometa fetching IMDb's Top 250 list to determine which
+ * movies qualify for the ribbon, the user can simply check "IMDb Top 250" and
+ * the badge will be applied to all preview targets that have the metadata.
+ */
+export interface ManualBuilderConfig {
+  /**
+   * Enable manual builder mode (skips external API calls)
+   */
+  enabled: boolean;
+
+  /**
+   * Resolution overlay (4K, 1080p, 720p badges)
+   */
+  resolution?: boolean;
+
+  /**
+   * Audio codec overlay (Atmos, DTS-HD, TrueHD badges)
+   */
+  audioCodec?: boolean;
+
+  /**
+   * HDR/Dolby Vision badges
+   */
+  hdr?: boolean;
+
+  /**
+   * Ratings overlay (IMDb, TMDb, RT scores)
+   */
+  ratings?: boolean;
+
+  /**
+   * Streaming service logos (Netflix, Disney+, Max, etc.)
+   */
+  streaming?: boolean;
+
+  /**
+   * TV network logos (HBO, AMC, etc.) - TV shows only
+   */
+  network?: boolean;
+
+  /**
+   * Studio logos
+   */
+  studio?: boolean;
+
+  /**
+   * Status badges (Returning, Ended, Canceled) - TV shows only
+   */
+  status?: boolean;
+
+  /**
+   * Ribbon badges - awards and rankings
+   */
+  ribbon?: {
+    imdbTop250?: boolean;
+    imdbLowest?: boolean;
+    rtCertifiedFresh?: boolean;
+    // Add more ribbon types as needed
+  };
+}
+
 export interface TestOptions {
   /**
    * IDs of specific targets to include (from PREVIEW_TARGETS)
@@ -33,6 +101,12 @@ export interface TestOptions {
    * Empty array means "all overlays"
    */
   selectedOverlays: string[];
+
+  /**
+   * Manual builder configuration for fast preview mode.
+   * When enabled, applies overlays directly without external API calls.
+   */
+  manualBuilderConfig?: ManualBuilderConfig;
 }
 
 /**
@@ -48,6 +122,26 @@ export interface CustomTarget {
 }
 
 /**
+ * Default manual builder configuration - disabled with all overlays off
+ */
+export const DEFAULT_MANUAL_BUILDER_CONFIG: ManualBuilderConfig = {
+  enabled: false,
+  resolution: false,
+  audioCodec: false,
+  hdr: false,
+  ratings: false,
+  streaming: false,
+  network: false,
+  studio: false,
+  status: false,
+  ribbon: {
+    imdbTop250: false,
+    imdbLowest: false,
+    rtCertifiedFresh: false,
+  },
+};
+
+/**
  * Default test options - include everything
  */
 export const DEFAULT_TEST_OPTIONS: TestOptions = {
@@ -60,6 +154,7 @@ export const DEFAULT_TEST_OPTIONS: TestOptions = {
   },
   selectedLibraries: [],
   selectedOverlays: [],
+  manualBuilderConfig: undefined,
 };
 
 /**
