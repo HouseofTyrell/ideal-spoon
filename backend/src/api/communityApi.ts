@@ -1,144 +1,101 @@
 import { Router, Request, Response } from 'express';
 import { communityLogger } from '../util/logger.js';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const router = Router();
 
-interface GitHubContent {
+// Types for the pre-fetched community data
+interface CommunityConfig {
   name: string;
   path: string;
-  type: 'file' | 'dir';
-  download_url?: string;
   size: number;
+  content: string;
+  overlays: string[];
+  url: string;
 }
 
 interface CommunityContributor {
   username: string;
-  path: string;
-  configCount: number;
+  configs: CommunityConfig[];
 }
 
-// Cache for contributors with overlays (refreshed every 24 hours)
-let contributorsWithOverlaysCache: CommunityContributor[] | null = null;
-let cacheTimestamp: number = 0;
-const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+interface CommunityData {
+  fetchedAt: string;
+  version: string;
+  contributors: CommunityContributor[];
+}
+
+// Load the pre-fetched community data
+let communityData: CommunityData | null = null;
+
+function loadCommunityData(): CommunityData | null {
+  if (communityData) {
+    return communityData;
+  }
+
+  try {
+    // Try multiple possible paths for the data file
+    // Use process.cwd() based paths since we can't use __dirname in CommonJS output
+    const possiblePaths = [
+      path.join(process.cwd(), 'dist/data/communityConfigs.json'),
+      path.join(process.cwd(), 'src/data/communityConfigs.json'),
+      path.join(process.cwd(), 'data/communityConfigs.json'),
+      '/app/dist/data/communityConfigs.json',
+      '/app/src/data/communityConfigs.json',
+    ];
+
+    for (const dataPath of possiblePaths) {
+      if (fs.existsSync(dataPath)) {
+        const rawData = fs.readFileSync(dataPath, 'utf-8');
+        communityData = JSON.parse(rawData) as CommunityData;
+        communityLogger.info({
+          path: dataPath,
+          contributors: communityData.contributors.length,
+          fetchedAt: communityData.fetchedAt
+        }, 'Loaded pre-fetched community configs');
+        return communityData;
+      }
+    }
+
+    communityLogger.warn('Community configs data file not found');
+    return null;
+  } catch (err) {
+    communityLogger.error({ err }, 'Failed to load community configs data');
+    return null;
+  }
+}
 
 /**
  * GET /api/community/contributors-with-overlays
- * List only contributors who have configs with overlays (cached for performance)
+ * List only contributors who have configs with overlays (from pre-fetched data)
  */
 router.get('/contributors-with-overlays', async (req: Request, res: Response) => {
   try {
-    const now = Date.now();
+    const data = loadCommunityData();
 
-    // Return cached result if still valid
-    if (contributorsWithOverlaysCache && (now - cacheTimestamp) < CACHE_DURATION) {
-      communityLogger.debug({ count: contributorsWithOverlaysCache.length }, 'Returning cached contributors');
-      res.json({
-        contributors: contributorsWithOverlaysCache,
-        total: contributorsWithOverlaysCache.length,
-        cached: true
+    if (!data) {
+      res.status(503).json({
+        error: 'Community configs data not available',
+        details: 'Pre-fetched data file not found. Run scripts/fetch-community-configs.sh to populate.'
       });
       return;
     }
 
-    communityLogger.info('Fetching and filtering contributors with overlays');
+    // Map to the expected format
+    const contributors = data.contributors.map(c => ({
+      username: c.username,
+      path: c.username,
+      configCount: c.configs.length
+    }));
 
-    // Fetch all contributors
-    const headers: Record<string, string> = {
-      'Accept': 'application/vnd.github.v3+json',
-      'User-Agent': 'Kometa-Preview-Studio'
-    };
-
-    // Use GitHub token if available to increase rate limit (60 -> 5000 requests/hour)
-    if (process.env.GITHUB_TOKEN) {
-      headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
-    }
-
-    const response = await fetch(
-      'https://api.github.com/repos/Kometa-Team/Community-Configs/contents/',
-      { headers }
-    );
-
-    if (!response.ok) {
-      throw new Error(`GitHub API error: ${response.statusText}`);
-    }
-
-    const contents = await response.json() as GitHubContent[];
-    const allContributors = contents
-      .filter(item => item.type === 'dir')
-      .map(item => item.name);
-
-    // Import yaml parser
-    const yaml = await import('../util/yaml.js');
-
-    // Filter to only contributors with overlay configs
-    const filtered: CommunityContributor[] = [];
-
-    for (const username of allContributors) {
-      try {
-        // Get contributor's configs
-        const configsResponse = await fetch(
-          `https://api.github.com/repos/Kometa-Team/Community-Configs/contents/${username}`,
-          { headers }
-        );
-
-        if (!configsResponse.ok) continue;
-
-        const configs = await configsResponse.json() as GitHubContent[];
-        const yamlFiles = configs.filter(item =>
-          item.type === 'file' &&
-          (item.name.endsWith('.yml') || item.name.endsWith('.yaml'))
-        );
-
-        // Check first config for overlays (as a sample)
-        if (yamlFiles.length > 0) {
-          const firstConfig = yamlFiles[0];
-          if (firstConfig.download_url) {
-            const contentResponse = await fetch(firstConfig.download_url);
-            if (contentResponse.ok) {
-              const content = await contentResponse.text();
-              const { parsed } = yaml.parseYaml(content);
-
-              if (parsed) {
-                const config = parsed as any;
-                let hasOverlays = false;
-
-                if (config.libraries) {
-                  for (const [, libConfig] of Object.entries(config.libraries as Record<string, any>)) {
-                    const typedConfig = libConfig as Record<string, any>;
-                    if (typedConfig.overlay_files && Array.isArray(typedConfig.overlay_files) && typedConfig.overlay_files.length > 0) {
-                      hasOverlays = true;
-                      break;
-                    }
-                  }
-                }
-
-                if (hasOverlays) {
-                  filtered.push({
-                    username,
-                    path: username,
-                    configCount: yamlFiles.length
-                  });
-                }
-              }
-            }
-          }
-        }
-      } catch (err) {
-        communityLogger.warn({ err, username }, 'Failed to check contributor');
-      }
-    }
-
-    // Update cache
-    contributorsWithOverlaysCache = filtered;
-    cacheTimestamp = now;
-
-    communityLogger.info({ count: filtered.length }, 'Found contributors with overlays');
+    communityLogger.debug({ count: contributors.length }, 'Returning pre-fetched contributors');
 
     res.json({
-      contributors: filtered,
-      total: filtered.length,
-      cached: false
+      contributors,
+      total: contributors.length,
+      cached: true,
+      fetchedAt: data.fetchedAt
     });
 
   } catch (err) {
@@ -152,37 +109,25 @@ router.get('/contributors-with-overlays', async (req: Request, res: Response) =>
 
 /**
  * GET /api/community/contributors
- * List all contributors from the Community-Configs repository
+ * List all contributors from pre-fetched data
  */
 router.get('/contributors', async (req: Request, res: Response) => {
   try {
-    const headers: Record<string, string> = {
-      'Accept': 'application/vnd.github.v3+json',
-      'User-Agent': 'Kometa-Preview-Studio'
-    };
-    if (process.env.GITHUB_TOKEN) {
-      headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
+    const data = loadCommunityData();
+
+    if (!data) {
+      res.status(503).json({
+        error: 'Community configs data not available',
+        details: 'Pre-fetched data file not found. Run scripts/fetch-community-configs.sh to populate.'
+      });
+      return;
     }
 
-    const response = await fetch(
-      'https://api.github.com/repos/Kometa-Team/Community-Configs/contents/',
-      { headers }
-    );
-
-    if (!response.ok) {
-      throw new Error(`GitHub API error: ${response.statusText}`);
-    }
-
-    const contents = await response.json() as GitHubContent[];
-
-    // Filter to only directories (contributors)
-    const contributors: CommunityContributor[] = contents
-      .filter(item => item.type === 'dir')
-      .map(item => ({
-        username: item.name,
-        path: item.path,
-        configCount: 0 // Will be populated on individual contributor fetch
-      }));
+    const contributors = data.contributors.map(c => ({
+      username: c.username,
+      path: c.username,
+      configCount: c.configs.length
+    }));
 
     res.json({
       contributors,
@@ -200,47 +145,34 @@ router.get('/contributors', async (req: Request, res: Response) => {
 
 /**
  * GET /api/community/contributor/:username
- * Get configs from a specific contributor
+ * Get configs from a specific contributor (from pre-fetched data)
  */
 router.get('/contributor/:username', async (req: Request, res: Response) => {
   try {
     const { username } = req.params;
+    const data = loadCommunityData();
 
-    const headers: Record<string, string> = {
-      'Accept': 'application/vnd.github.v3+json',
-      'User-Agent': 'Kometa-Preview-Studio'
-    };
-    if (process.env.GITHUB_TOKEN) {
-      headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
+    if (!data) {
+      res.status(503).json({
+        error: 'Community configs data not available',
+        details: 'Pre-fetched data file not found. Run scripts/fetch-community-configs.sh to populate.'
+      });
+      return;
     }
 
-    const response = await fetch(
-      `https://api.github.com/repos/Kometa-Team/Community-Configs/contents/${username}`,
-      { headers }
-    );
+    const contributor = data.contributors.find(c => c.username === username);
 
-    if (!response.ok) {
-      if (response.status === 404) {
-        res.status(404).json({ error: 'Contributor not found' });
-        return;
-      }
-      throw new Error(`GitHub API error: ${response.statusText}`);
+    if (!contributor) {
+      res.status(404).json({ error: 'Contributor not found' });
+      return;
     }
 
-    const contents = await response.json() as GitHubContent[];
-
-    // Filter YAML files
-    const configs = contents
-      .filter(item =>
-        item.type === 'file' &&
-        (item.name.endsWith('.yml') || item.name.endsWith('.yaml'))
-      )
-      .map(item => ({
-        name: item.name,
-        path: item.path,
-        downloadUrl: item.download_url,
-        size: item.size
-      }));
+    // Map configs to the expected format (without content to save bandwidth)
+    const configs = contributor.configs.map(c => ({
+      name: c.name,
+      path: c.path,
+      size: c.size
+    }));
 
     res.json({
       username,
@@ -259,40 +191,41 @@ router.get('/contributor/:username', async (req: Request, res: Response) => {
 
 /**
  * GET /api/community/config/:username/:filename
- * Fetch raw config file content
+ * Get config file content (from pre-fetched data)
  */
 router.get('/config/:username/:filename', async (req: Request, res: Response) => {
   try {
     const { username, filename } = req.params;
+    const data = loadCommunityData();
 
-    const headers: Record<string, string> = {
-      'User-Agent': 'Kometa-Preview-Studio'
-    };
-    if (process.env.GITHUB_TOKEN) {
-      headers['Authorization'] = `token ${process.env.GITHUB_TOKEN}`;
+    if (!data) {
+      res.status(503).json({
+        error: 'Community configs data not available',
+        details: 'Pre-fetched data file not found. Run scripts/fetch-community-configs.sh to populate.'
+      });
+      return;
     }
 
-    // Fetch file content
-    const response = await fetch(
-      `https://raw.githubusercontent.com/Kometa-Team/Community-Configs/master/${username}/${filename}`,
-      { headers }
-    );
+    const contributor = data.contributors.find(c => c.username === username);
 
-    if (!response.ok) {
-      if (response.status === 404) {
-        res.status(404).json({ error: 'Config file not found' });
-        return;
-      }
-      throw new Error(`GitHub fetch error: ${response.statusText}`);
+    if (!contributor) {
+      res.status(404).json({ error: 'Contributor not found' });
+      return;
     }
 
-    const content = await response.text();
+    const config = contributor.configs.find(c => c.name === filename);
+
+    if (!config) {
+      res.status(404).json({ error: 'Config file not found' });
+      return;
+    }
 
     res.json({
       username,
       filename,
-      content,
-      url: `https://github.com/Kometa-Team/Community-Configs/blob/master/${username}/${filename}`
+      content: config.content,
+      url: config.url,
+      overlays: config.overlays
     });
 
   } catch (err) {
@@ -327,15 +260,14 @@ router.post('/parse-overlays', async (req: Request, res: Response) => {
     }
 
     // Extract overlay information
-    const config = parsed as any;
+    const config = parsed as Record<string, unknown>;
     const overlays: string[] = [];
 
     // Check for overlay_files in libraries
     if (config.libraries) {
-      for (const [libName, libConfig] of Object.entries(config.libraries as Record<string, any>)) {
-        const typedConfig = libConfig as Record<string, any>;
-        if (typedConfig.overlay_files && Array.isArray(typedConfig.overlay_files)) {
-          overlays.push(...typedConfig.overlay_files.map((f: any) =>
+      for (const [, libConfig] of Object.entries(config.libraries as Record<string, Record<string, unknown>>)) {
+        if (libConfig.overlay_files && Array.isArray(libConfig.overlay_files)) {
+          overlays.push(...libConfig.overlay_files.map((f: unknown) =>
             typeof f === 'string' ? f : JSON.stringify(f)
           ));
         }
@@ -345,13 +277,51 @@ router.post('/parse-overlays', async (req: Request, res: Response) => {
     res.json({
       success: true,
       overlays: [...new Set(overlays)], // Remove duplicates
-      libraryCount: config.libraries ? Object.keys(config.libraries).length : 0
+      libraryCount: config.libraries ? Object.keys(config.libraries as object).length : 0
     });
 
   } catch (err) {
     communityLogger.error({ err }, 'Parse overlays error');
     res.status(500).json({
       error: 'Failed to parse overlays',
+      details: err instanceof Error ? err.message : 'Unknown error'
+    });
+  }
+});
+
+/**
+ * GET /api/community/stats
+ * Get statistics about the pre-fetched community data
+ */
+router.get('/stats', async (req: Request, res: Response) => {
+  try {
+    const data = loadCommunityData();
+
+    if (!data) {
+      res.status(503).json({
+        error: 'Community configs data not available',
+        details: 'Pre-fetched data file not found. Run scripts/fetch-community-configs.sh to populate.'
+      });
+      return;
+    }
+
+    const totalConfigs = data.contributors.reduce((sum, c) => sum + c.configs.length, 0);
+    const totalOverlays = data.contributors.reduce((sum, c) =>
+      sum + c.configs.reduce((cSum, cfg) => cSum + cfg.overlays.length, 0), 0
+    );
+
+    res.json({
+      fetchedAt: data.fetchedAt,
+      version: data.version,
+      contributorCount: data.contributors.length,
+      configCount: totalConfigs,
+      overlayCount: totalOverlays
+    });
+
+  } catch (err) {
+    communityLogger.error({ err }, 'Fetch stats error');
+    res.status(500).json({
+      error: 'Failed to fetch stats',
       details: err instanceof Error ? err.message : 'Unknown error'
     });
   }

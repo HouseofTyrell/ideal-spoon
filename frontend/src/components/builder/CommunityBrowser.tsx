@@ -3,7 +3,6 @@ import {
   getCommunityContributors,
   getContributorConfigs,
   getCommunityConfig,
-  parseCommunityOverlays,
   type CommunityContributor,
   type CommunityConfig
 } from '../../api/client'
@@ -76,28 +75,11 @@ function CommunityBrowser({ onImportConfig }: CommunityBrowserProps) {
 
       const data = await getContributorConfigs(username)
 
-      // Filter configs to only include those with overlays
-      const configsWithOverlays: CommunityConfig[] = []
+      // All configs from pre-fetched data already have overlays
+      // No need to filter or parse each one individually
+      setConfigs(data.configs)
 
-      for (const config of data.configs) {
-        try {
-          // Fetch and parse each config to check for overlays
-          const configData = await getCommunityConfig(username, config.name)
-          const parsed = await parseCommunityOverlays(configData.content)
-
-          // Only include configs that have overlays
-          if (parsed.success && parsed.overlays.length > 0) {
-            configsWithOverlays.push(config)
-          }
-        } catch (error) {
-          // Skip configs that fail to parse
-          console.warn(`Failed to check config ${config.name}:`, error)
-        }
-      }
-
-      setConfigs(configsWithOverlays)
-
-      if (configsWithOverlays.length === 0) {
+      if (data.configs.length === 0) {
         setError('No configs with overlays found for this contributor')
       }
     } catch (err) {
@@ -118,14 +100,9 @@ function CommunityBrowser({ onImportConfig }: CommunityBrowserProps) {
       setConfigContent(data.content)
       setConfigUrl(data.url)
 
-      // Parse overlays from content
-      try {
-        const parsed = await parseCommunityOverlays(data.content)
-        if (parsed.success) {
-          setOverlays(parsed.overlays)
-        }
-      } catch (parseErr) {
-        console.warn('Failed to parse overlays:', parseErr)
+      // Overlays are now pre-parsed and included in the response
+      if (data.overlays && Array.isArray(data.overlays)) {
+        setOverlays(data.overlays)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load config content')
@@ -211,6 +188,9 @@ function CommunityBrowser({ onImportConfig }: CommunityBrowserProps) {
                 >
                   <span className="contributor-icon">👤</span>
                   <span className="contributor-name">{contributor.username}</span>
+                  {contributor.configCount && (
+                    <span className="config-count">{contributor.configCount}</span>
+                  )}
                 </button>
               ))
             )}

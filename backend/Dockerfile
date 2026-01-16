@@ -30,6 +30,9 @@ RUN npm install --omit=dev
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 
+# Copy pre-fetched data files (community configs, etc.)
+COPY --from=builder /app/src/data ./dist/data
+
 # Create jobs directory
 RUN mkdir -p /app/jobs
 

@@ -632,6 +632,7 @@ export async function getCommunityConfig(
   filename: string;
   content: string;
   url: string;
+  overlays?: string[];
 }> {
   const response = await fetch(`${API_BASE}/community/config/${username}/${filename}`);
 
