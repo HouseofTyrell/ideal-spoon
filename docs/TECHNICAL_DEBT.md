@@ -254,12 +254,26 @@ Status:
 - ✅ Artifact management (`ArtifactManager`)
 
 ### Event-Driven Architecture
-Consider for future:
-- Job queue (Bull/BullMQ) for background processing
-- Concurrent job limits
+Status:
 - ✅ Retry logic with exponential backoff - ADDED 2026-01-16
   - Created `util/retry.ts` with `withRetry()` and `isRetryableHttpError()`
   - TMDb client now retries on network errors and rate limiting
+
+**Future (P4): Job Queue with BullMQ**
+
+Benefits:
+- Concurrent job execution with configurable limits
+- Job persistence across server restarts
+- Automatic retries with exponential backoff
+- Job prioritization and scheduling
+- Dead letter queue for failed jobs
+
+Implementation steps:
+1. Install `bullmq` and Redis dependencies
+2. Create job queue service with producers/consumers
+3. Migrate JobManager to use queue
+4. Add Redis to docker-compose.yml
+5. Add dashboard for job monitoring (optional: bull-board)
 
 ---
 
@@ -275,10 +289,21 @@ Consider for future:
 - [ ] Job lifecycle
 - [ ] SSE event streaming
 
-### E2E Tests (Priority 3)
-- [ ] Full preview workflow
-- [ ] Error scenarios
-- [ ] Browser compatibility
+### E2E Tests (Priority 3) - Future (P4)
+**Recommended: Playwright**
+
+Test scenarios to cover:
+- [ ] Full preview workflow (upload config → select target → view results)
+- [ ] Error scenarios (invalid config, network failures, job cancellation)
+- [ ] Browser compatibility (Chrome, Firefox, Safari)
+- [ ] Responsive design verification
+
+Implementation steps:
+1. Install `@playwright/test` and browser dependencies
+2. Create test fixtures for mock Plex server responses
+3. Write page objects for Config, Preview, and Results pages
+4. Add CI pipeline integration
+5. Configure visual regression testing (optional)
 
 ---
 
