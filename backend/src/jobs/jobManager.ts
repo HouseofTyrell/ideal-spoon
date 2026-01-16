@@ -13,6 +13,7 @@ import { generatePreviewConfig } from '../kometa/configGenerator.js';
 import { TestOptions, DEFAULT_TEST_OPTIONS } from '../types/testOptions.js';
 import { JobRepository, JobMeta, JobTarget, JobStatus } from './jobRepository.js';
 import { ArtifactManager, JobArtifacts } from './artifactManager.js';
+import { jobLogger } from '../util/logger.js';
 
 // Re-export types for backwards compatibility
 export type { JobStatus, JobTarget, JobMeta } from './jobRepository.js';
@@ -59,6 +60,24 @@ class JobManager extends EventEmitter {
   }
 
   /**
+   * Pre-pull the Docker image during server startup
+   * This prevents the first preview job from being blocked by image pull
+   *
+   * @param onProgress - Optional callback for pull progress updates
+   * @returns true if image was pulled, false if already available
+   */
+  async prePullDockerImage(onProgress?: (message: string) => void): Promise<boolean> {
+    return this.runner.prePullImage(onProgress);
+  }
+
+  /**
+   * Check if Docker is available
+   */
+  async checkDockerAvailable(): Promise<boolean> {
+    return this.runner.checkDockerAvailable();
+  }
+
+  /**
    * Create a new preview job from config YAML
    * @param configYaml - The Kometa configuration YAML
    * @param testOptions - Optional test options for selective testing
@@ -67,12 +86,12 @@ class JobManager extends EventEmitter {
     const jobId = uuidv4();
     const paths = getJobPaths(jobId);
 
-    console.log('createJob called with manual mode:', testOptions?.manualBuilderConfig?.enabled);
+    jobLogger.info({ jobId, manualMode: testOptions?.manualBuilderConfig?.enabled }, 'Creating new job');
 
     // Parse and validate config
     const parseResult = parseYaml(configYaml);
     if (parseResult.error || !parseResult.parsed) {
-      console.error('Config parse error:', parseResult.error);
+      jobLogger.error({ error: parseResult.error }, 'Config parse error');
       throw new Error(`Invalid config: ${parseResult.error}`);
     }
 
@@ -121,9 +140,9 @@ class JobManager extends EventEmitter {
 
     // Start job processing in background
     this.processJob(jobId, config, analysis, options).catch((err) => {
-      console.error(`Job ${jobId} failed:`, err);
+      jobLogger.error({ jobId, err }, 'Job failed');
       this.updateJobStatus(jobId, 'failed', 0, err.message).catch((updateErr) => {
-        console.error(`Failed to update job ${jobId} status:`, updateErr);
+        jobLogger.error({ jobId, err: updateErr }, 'Failed to update job status');
       });
     });
 
@@ -505,7 +524,7 @@ class JobManager extends EventEmitter {
       await this.runner.cancel(jobId);
     } catch (err) {
       // Ignore errors - we're forcing this to fail regardless
-      console.warn(`Force fail: Could not cancel container for ${jobId}:`, err);
+      jobLogger.warn({ jobId, err }, 'Force fail: Could not cancel container');
     }
 
     // Update status to failed
@@ -577,7 +596,9 @@ class JobManager extends EventEmitter {
     }
 
     meta.updatedAt = new Date().toISOString();
-    this.repository.saveJobMeta(jobId, meta).catch(console.error);
+    this.repository.saveJobMeta(jobId, meta).catch((err) => {
+      jobLogger.error({ jobId, err }, 'Failed to save job metadata');
+    });
   }
 }
 

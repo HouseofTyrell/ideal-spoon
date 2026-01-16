@@ -66,19 +66,19 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 
 ---
 
-## Remaining High Priority Issues
+### ✅ 5. Docker Image Pull Blocks Requests → Pre-pull on Startup
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-### 5. Docker Image Pull Blocks Requests
-**Priority:** HIGH
-**Impact:** First preview can take minutes
-**Location:** `backend/src/kometa/runner.ts`
-
-**Action Items:**
-- [ ] Pre-pull image during server initialization
-- [ ] Add progress events during pull
-- [ ] Cache pull status to avoid repeated checks
+- Added `prePullImage()` method to `KometaRunner` class
+- Added `checkDockerAvailable()` method for Docker availability check
+- Server startup calls `prePullDockerImageInBackground()` after listen
+- Progress messages logged during pull
+- Graceful handling when Docker unavailable
 
 ---
+
+## Remaining High Priority Issues
 
 ### Expand Test Coverage
 **Priority:** HIGH
@@ -97,31 +97,37 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 
 ---
 
-### Console.log Usage (189 occurrences)
+### Console.log Migration to Pino (Partial)
 **Priority:** MEDIUM-HIGH
 **Impact:** No structured logging, hard to debug production issues
+**Status:** IN PROGRESS
 
-**Action Items:**
-- [ ] Install `pino` for structured logging
-- [ ] Replace console.log with logger calls
-- [ ] Add log levels (debug, info, warn, error)
+**Completed:**
+- [x] Install `pino` and `pino-pretty` for structured logging
+- [x] Create logger utility (`backend/src/util/logger.ts`) with component loggers
+- [x] Migrate `index.ts` to use structured logging
+- [x] Migrate `jobManager.ts` to use structured logging
+- [x] Migrate `runner.ts` to use structured logging
+- [x] Add log levels (debug, info, warn, error)
+
+**Remaining Action Items:**
+- [ ] Migrate remaining ~170 console.log calls in other files
 - [ ] Add request logging middleware
+- [ ] Configure log aggregation for production
 
 ---
 
 ## Medium Priority Issues
 
-### 6. Code Duplication in Plex Client
-**Priority:** MEDIUM-HIGH
-**Impact:** Maintenance burden, bug surface
-**Location:** `backend/src/plex/plexClient.ts`
+### ✅ 6. Code Duplication in Plex Client → Refactored
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-`searchMovies()` and `searchShows()` share ~130 lines of identical logic.
-
-**Action Items:**
-- [ ] Extract common search logic to `searchByType(type, title, year?)`
-- [ ] Use generics for return types
-- [ ] Add comprehensive tests before refactoring
+- Extracted `searchByType()` for common section/type filtering logic
+- Extracted `searchInSection()` for search/fallback logic
+- Extracted `mapToMediaItem()` for response mapping
+- `searchMovies()` and `searchShows()` are now thin wrappers
+- Reduced code from ~130 duplicated lines to <30 lines each
 
 ---
 
@@ -139,18 +145,15 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 
 ---
 
-### 10. Complex State in Preview Page
-**Priority:** MEDIUM
-**Impact:** Hard to reason about state changes
-**Location:** `frontend/src/pages/Preview.tsx`
+### ✅ 10. Complex State in Preview Page → useReducer
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-9 related state variables should use `useReducer`.
-
-**Action Items:**
-- [ ] Define `PreviewState` interface
-- [ ] Create `previewReducer` function
-- [ ] Replace useState calls with useReducer
-- [ ] Define action types for state transitions
+- Defined `PreviewState` interface with all 9 state variables
+- Created `previewReducer` function with typed actions
+- Replaced 9 `useState` calls with single `useReducer`
+- Defined `PreviewAction` discriminated union for all state transitions
+- State transitions are now explicit and predictable
 
 ---
 
@@ -286,11 +289,12 @@ Consider for future:
 | `zod` | Runtime validation | ✅ Installed |
 | `jest` | Backend testing | ✅ Installed |
 | `vitest` | Frontend testing | ✅ Installed |
+| `pino` | Structured logging | ✅ Installed |
+| `pino-pretty` | Dev log formatting | ✅ Installed |
 
 ### Still Needed
 | Package | Purpose | Priority |
 |---------|---------|----------|
-| `pino` | Structured logging | Medium |
 | `helmet` | Security headers | Low |
 | `express-rate-limit` | Rate limiting | Low |
 

@@ -73,11 +73,14 @@ describe('hash utilities', () => {
       expect(ids.size).toBe(100);
     });
 
-    it('should be shorter than job IDs', () => {
+    it('should have shorter random component than job IDs', () => {
       const jobId = generateJobId();
       const profileId = generateProfileId();
-      // Profile IDs have shorter random component (4 chars vs 6)
-      expect(profileId.length).toBeLessThan(jobId.length);
+      // Profile IDs have 4-char random, job IDs have 6-char random
+      // Extract random parts: last segment after final underscore
+      const jobRandom = jobId.split('_').pop()!;
+      const profileRandom = profileId.split('_').pop()!;
+      expect(profileRandom.length).toBeLessThan(jobRandom.length);
     });
   });
 });
