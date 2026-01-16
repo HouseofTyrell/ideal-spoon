@@ -996,27 +996,69 @@ def composite_overlays(
                     top_right_y += studio_overlay.height + 5
                 img.paste(studio_overlay, (x, y), studio_overlay)
 
-        # Ratings
-        if any(metadata.get(k) for k in ['imdbRating', 'tmdbRating', 'rtRating']):
-            ratings_overlay = create_ratings_overlay(
-                imdb_rating=metadata.get('imdbRating'),
-                tmdb_rating=metadata.get('tmdbRating'),
-                rt_rating=metadata.get('rtRating')
-            )
-            if ratings_overlay:
-                # Use dynamic positioning if available
+        # Ratings - Kometa stacks them vertically with center rating at vertical center
+        ratings_data = []
+        if metadata.get('rtRating'):
+            ratings_data.append(('rt_critics', f"{metadata.get('rtRating')}%"))
+        if metadata.get('imdbRating'):
+            ratings_data.append(('imdb', f"{metadata.get('imdbRating'):.1f}"))
+        if metadata.get('tmdbRating'):
+            ratings_data.append(('tmdb', f"{metadata.get('tmdbRating'):.1f}"))
+
+        if ratings_data:
+            # Create individual rating badges
+            rating_badges = []
+            for source, value in ratings_data[:3]:  # Limit to 3 ratings
+                badge = _create_single_rating_badge(source, value)
+                if badge:
+                    rating_badges.append(badge)
+
+            if rating_badges:
+                # Get positioning config
                 pos_config = None
                 if HAS_POSITIONING:
                     pos_config = get_position_for_target('ratings', target_type, overlay_positions)
 
                 if pos_config:
-                    x, y = calculate_position(ratings_overlay.width, ratings_overlay.height, target_width, target_height, pos_config)
-                    print(f"  Ratings positioned at ({x}, {y}) using config")
+                    # Stack vertically with center badge at vertical center
+                    # Spacing between badges (Kometa default is about 5-10px)
+                    badge_spacing = 5
+
+                    # For vertical stacking, position the middle badge (or second if even count)
+                    center_index = len(rating_badges) // 2
+                    center_badge = rating_badges[center_index]
+
+                    # Calculate center position for the center badge
+                    center_x, center_y = calculate_position(
+                        center_badge.width, center_badge.height,
+                        target_width, target_height, pos_config
+                    )
+
+                    # Position each badge relative to center
+                    current_y = center_y
+                    for i in range(center_index, -1, -1):  # Work upwards from center
+                        badge = rating_badges[i]
+                        x = center_x
+                        img.paste(badge, (x, current_y), badge)
+                        if i > 0:
+                            current_y -= (badge.height + badge_spacing)
+
+                    # Position badges below center
+                    current_y = center_y + center_badge.height + badge_spacing
+                    for i in range(center_index + 1, len(rating_badges)):
+                        badge = rating_badges[i]
+                        x = center_x
+                        img.paste(badge, (x, current_y), badge)
+                        current_y += badge.height + badge_spacing
+
+                    print(f"  Ratings positioned at ({center_x}, {center_y}) using config (center badge)")
                 else:
-                    # Fallback to hardcoded bottom-left using actual overlay height
+                    # Fallback to hardcoded bottom-left stacking
                     x = BADGE_PADDING
-                    y = target_height - ratings_overlay.height - BADGE_PADDING
-                img.paste(ratings_overlay, (x, y), ratings_overlay)
+                    y = target_height - sum(b.height for b in rating_badges) - (len(rating_badges) - 1) * 5 - BADGE_PADDING
+                    for badge in rating_badges:
+                        img.paste(badge, (x, y), badge)
+                        y += badge.height + 5
 
         # Status badge for shows
         if target_type == 'show' and metadata.get('status'):
