@@ -206,28 +206,24 @@ Some hardcoded values should be in constants:
 
 ---
 
-### 14. Missing Security Headers
-**Priority:** LOW (local-only app)
-**Location:** `backend/src/index.ts`
+### ✅ 14. Missing Security Headers
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-**Action Items:**
-- [ ] Add `helmet` middleware for security headers
-- [ ] Document HTTPS requirement for production
-- [ ] Add rate limiting for API endpoints
+- Added `helmet` middleware with CSP configured for Plex artwork
+- Added `express-rate-limit` middleware (200 req/min, health checks exempt)
+- Relaxed CSP to allow cross-origin images and API calls to Plex servers
 
 ---
 
-### Community/Sharing APIs Documentation
-**Priority:** LOW
-**Impact:** Unclear feature completeness
+### ✅ Community/Sharing APIs Documentation
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-Community and Sharing APIs exist but documentation is sparse.
-
-**Action Items:**
-- [ ] Document Community API usage and limitations
-- [ ] Document Sharing API usage
-- [ ] Add rate limiting for GitHub API calls
-- [ ] Or mark features as experimental in docs
+- Added full API documentation to README.md
+- Documented Builder, Community, and Sharing API endpoints with examples
+- Added curl examples for common operations
+- Noted GITHUB_TOKEN requirement for increased rate limits
 
 ---
 
@@ -259,7 +255,7 @@ Consider for future:
 ### Unit Tests (Implemented)
 - ✅ Pure functions: `yaml.ts`, `hash.ts`
 - ✅ Business logic: `resolveTargets.ts`, `configGenerator.ts`
-- [ ] Plex client (with mocked HTTP)
+- ✅ Plex client (`plexClient.test.ts` with mocked HTTP) - ADDED 2026-01-16
 
 ### Integration Tests (Priority 2)
 - [ ] API endpoint contracts

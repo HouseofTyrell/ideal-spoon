@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import pinoHttp from 'pino-http';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import * as path from 'path';
 import configRouter from './api/configUpload.js';
 import plexRouter from './api/plexApi.js';
@@ -55,6 +57,34 @@ async function main() {
     origin: CORS_ORIGIN,
     credentials: true,
   }));
+
+  // Security headers via helmet
+  // Configured for local development tool (relaxed CSP for serving images)
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:', 'blob:', '*'], // Allow images from any source for Plex artwork
+        scriptSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        connectSrc: ["'self'", '*'], // Allow API calls to Plex servers
+      },
+    },
+    crossOriginEmbedderPolicy: false, // Disable for image loading from external sources
+    crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow cross-origin resource sharing
+  }));
+
+  // Rate limiting - generous limits for local development tool
+  // Protects against runaway scripts but allows normal usage
+  const apiLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute window
+    max: 200, // 200 requests per minute per IP
+    message: { error: 'Too many requests, please try again later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.path === '/api/health', // Don't rate limit health checks
+  });
+  app.use('/api/', apiLimiter);
 
   // Request logging middleware
   app.use(pinoHttp({
