@@ -97,21 +97,19 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 
 ---
 
-### Console.log Migration to Pino (Partial)
-**Priority:** MEDIUM-HIGH
-**Impact:** No structured logging, hard to debug production issues
-**Status:** IN PROGRESS
+### ✅ Console.log Migration to Pino
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-**Completed:**
-- [x] Install `pino` and `pino-pretty` for structured logging
-- [x] Create logger utility (`backend/src/util/logger.ts`) with component loggers
-- [x] Migrate `index.ts` to use structured logging
-- [x] Migrate `jobManager.ts` to use structured logging
-- [x] Migrate `runner.ts` to use structured logging
-- [x] Add log levels (debug, info, warn, error)
+- Installed `pino` and `pino-pretty` for structured logging
+- Created logger utility (`backend/src/util/logger.ts`) with domain-specific loggers:
+  - `apiLogger`, `jobLogger`, `plexLogger`, `configLogger`, `runnerLogger`
+  - `storageLogger`, `tmdbLogger`, `communityLogger`, `sharingLogger`, `builderLogger`
+- Migrated all console.log/error/warn calls in backend source (48 calls across 10 files)
+- Debug tools in `debug/` folder intentionally left with console output
+- All logs now include structured context for better observability
 
-**Remaining Action Items:**
-- [ ] Migrate remaining ~170 console.log calls in other files
+**Remaining Low Priority:**
 - [ ] Add request logging middleware
 - [ ] Configure log aggregation for production
 
@@ -170,17 +168,14 @@ Frontend and backend now use consistent status values: `'pending' | 'running' | 
 
 ---
 
-### Profile Expiry Not Communicated
-**Priority:** MEDIUM
-**Impact:** Users may lose data unexpectedly
-**Location:** `backend/src/constants.ts`
+### ✅ Profile Expiry Not Communicated
+**Status:** RESOLVED
+**Resolution Date:** 2026-01-16
 
-Profiles auto-expire after 24 hours with no warning to users.
-
-**Action Items:**
-- [ ] Add expiry timestamp to profile API response
-- [ ] Show warning in UI when profile expires soon
-- [ ] Consider configurable expiry time
+- Added `calculateExpiresAt()` helper to return expiry timestamp in API responses
+- Created `ProfileExpiryWarning.tsx` React component with live countdown
+- Component shows info (>2hrs), warning (<2hrs), or expired states
+- Countdown updates every minute
 
 ---
 
