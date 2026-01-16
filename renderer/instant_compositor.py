@@ -727,13 +727,20 @@ def create_ratings_overlay(
 
 
 def _create_single_rating_badge(source: str, value: str) -> Optional[Image.Image]:
-    """Create a single rating badge with logo and value."""
+    """Create a single rating badge with logo and value matching Kometa dimensions."""
+    # Kometa default dimensions for vertical alignment (square badges)
+    badge_width = 160
+    badge_height = 160
+    back_padding = 15
+    back_radius = 30
+
     # Try to get the source logo
     logo = None
     if HAS_OVERLAY_ASSETS:
         asset_data = get_rating_source_asset(source)
         if asset_data:
-            logo = load_png_overlay(asset_data, max_width=40, max_height=40)
+            # Logos should be sized appropriately for 160x160 badge
+            logo = load_png_overlay(asset_data, max_width=80, max_height=80)
             if logo:
                 print(f"  Using rating logo PNG asset for: {source}")
             else:
@@ -741,28 +748,35 @@ def _create_single_rating_badge(source: str, value: str) -> Optional[Image.Image
         else:
             print(f"  No rating logo PNG asset found for: {source}")
 
-    # Create badge background
-    badge_width = 100 if logo else 80
-    badge_height = 50
     badge = Image.new('RGBA', (badge_width, badge_height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(badge)
 
-    # Draw semi-transparent background
-    draw.rectangle([(0, 0), (badge_width, badge_height)], fill=(0, 0, 0, 153))
+    # Draw semi-transparent background with rounded corners
+    draw.rounded_rectangle(
+        [(0, 0), (badge_width, badge_height)],
+        radius=back_radius,
+        fill=(0, 0, 0, 153)
+    )
+
+    # Layout: logo on top, rating value below
+    current_y = back_padding
 
     # Add logo if available
-    x_offset = 5
     if logo:
-        logo_y = (badge_height - logo.height) // 2
-        badge.paste(logo, (5, logo_y), logo)
-        x_offset = logo.width + 10
+        logo_x = (badge_width - logo.width) // 2
+        badge.paste(logo, (logo_x, current_y), logo)
+        current_y += logo.height + 10
 
-    # Add rating value text
-    font = _get_cached_font(24)
+    # Add rating value text (Kometa default font size is 63)
+    font = _get_cached_font(63)
     text_bbox = draw.textbbox((0, 0), value, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
-    text_y = (badge_height - text_height) // 2
-    draw.text((x_offset, text_y), value, fill='#FFFFFF', font=font)
+
+    # Center text horizontally, position below logo
+    text_x = (badge_width - text_width) // 2
+    text_y = current_y
+    draw.text((text_x, text_y), value, fill='#FFFFFF', font=font)
 
     return badge
 
